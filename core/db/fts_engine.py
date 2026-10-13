@@ -1,7 +1,7 @@
 """Full-Text Search (FTS5) BM25 retrieval engine for Wayfinder.
 
-Provides high-speed, local-first search across indexed video transcripts
-with sub-10ms query execution times and query sanitization.
+Provides high-speed, multi-source (YouTube, Steam, Wikis) search
+with sub-millisecond query execution times and query sanitization.
 """
 
 from __future__ import annotations
@@ -26,24 +26,36 @@ from core.db.seeds.sekiro_seed import seed_sekiro
 
 @dataclass
 class SearchResult:
-    """Represents a ranked search result returned from the FTS engine."""
+    """Represents a ranked combat guide search result."""
 
     chunk_id: int
     game_id: str
     encounter_id: str
-    video_id: str
+    source_type: str  # 'youtube', 'steam', 'wiki'
+    source_ref: str
     start_time: float
     end_time: float
-    transcript_text: str
+    content_text: str
     bm25_score: float
     latency_ms: float
 
     @property
     def formatted_timestamp(self) -> str:
-        """Returns human-readable M:SS timestamp format."""
+        """Returns human-readable M:SS timestamp format for video sources."""
+        if self.source_type != "youtube" or (self.start_time == 0.0 and self.end_time == 0.0):
+            return "N/A (Written Guide)"
         start_min, start_sec = divmod(int(self.start_time), 60)
         end_min, end_sec = divmod(int(self.end_time), 60)
         return f"{start_min}:{start_sec:02d} - {end_min}:{end_sec:02d}"
+
+    @property
+    def source_label(self) -> str:
+        """Returns a clean display label indicating the origin."""
+        if self.source_type == "youtube":
+            return f"YouTube [{self.formatted_timestamp}] ({self.source_ref})"
+        elif self.source_type == "steam":
+            return f"Steam Community Guide ({self.source_ref})"
+        return f"{self.source_type.title()} ({self.source_ref})"
 
 
 def sanitize_query(query: str) -> str:
@@ -52,12 +64,9 @@ def sanitize_query(query: str) -> str:
     Extracts words/phrases, strips special FTS5 control characters (*, :, ^, etc.)
     that could cause syntax errors, and formats tokens for BM25 matching.
     """
-    # Extract alphanumeric words and basic hyphenated terms
     tokens = re.findall(r"\b[\w\-]+\b", query)
     if not tokens:
         return ""
-    # Wrap each token in double quotes to prevent syntax collisions with SQLite keywords
-    # e.g., 'lightning' -> '"lightning"'
     escaped_tokens = [f'"{token}"' for token in tokens]
     return " ".join(escaped_tokens)
 
@@ -81,9 +90,10 @@ class FTSEngine:
         query: str,
         game_id: str = "sekiro",
         encounter_id: Optional[str] = None,
+        source_type: Optional[str] = None,
         limit: int = 5,
     ) -> List[SearchResult]:
-        """Executes a BM25 ranked search for the given query and game.
+        """Executes a BM25 ranked search for the given query and filters.
         
         Measures precise wall-clock latency down to microsecond precision.
         """
@@ -91,16 +101,16 @@ class FTSEngine:
         if not sanitized:
             return []
 
-        # Construct SQL with optional encounter filter
         sql = """
             SELECT 
                 c.id,
                 c.game_id,
                 c.encounter_id,
-                c.video_id,
+                c.source_type,
+                c.source_ref,
                 c.start_time,
                 c.end_time,
-                c.transcript_text,
+                c.content_text,
                 guide_fts.rank AS bm25_score
             FROM guide_fts
             JOIN guide_chunks c ON c.id = guide_fts.rowid
@@ -116,6 +126,10 @@ class FTSEngine:
         if encounter_id:
             sql += " AND c.encounter_id = :encounter_id"
             params["encounter_id"] = encounter_id
+
+        if source_type:
+            sql += " AND c.source_type = :source_type"
+            params["source_type"] = source_type
 
         sql += """
             ORDER BY guide_fts.rank ASC
@@ -135,10 +149,11 @@ class FTSEngine:
                 chunk_id=row["id"],
                 game_id=row["game_id"],
                 encounter_id=row["encounter_id"],
-                video_id=row["video_id"],
+                source_type=row["source_type"],
+                source_ref=row["source_ref"],
                 start_time=row["start_time"],
                 end_time=row["end_time"],
-                transcript_text=row["transcript_text"],
+                content_text=row["content_text"],
                 bm25_score=row["bm25_score"],
                 latency_ms=latency_ms,
             )
@@ -155,7 +170,6 @@ class FTSEngine:
 
 def run_benchmark(engine: FTSEngine, query: str, game_id: str, runs: int = 100) -> dict:
     """Runs a warm-up and multi-iteration latency benchmark."""
-    # Warm up cache with 5 queries
     for _ in range(5):
         engine.search(query=query, game_id=game_id)
 
@@ -186,11 +200,12 @@ def run_benchmark(engine: FTSEngine, query: str, game_id: str, runs: int = 100) 
 
 
 def main() -> None:
-    """CLI entrypoint for testing and benchmarking the FTS engine."""
-    parser = argparse.ArgumentParser(description="Wayfinder FTS BM25 Retrieval Engine")
+    """CLI entrypoint for testing and benchmarking the multi-source FTS engine."""
+    parser = argparse.ArgumentParser(description="Wayfinder Multi-Source FTS BM25 Retrieval Engine")
     parser.add_argument("query", type=str, help="Search query (e.g. 'lightning reversal')")
     parser.add_argument("--game", type=str, default="sekiro", help="Target game_id (default: sekiro)")
     parser.add_argument("--encounter", type=str, default=None, help="Optional encounter_id filter")
+    parser.add_argument("--source", type=str, default=None, choices=["youtube", "steam", "wiki"], help="Filter by source type")
     parser.add_argument("--limit", type=int, default=3, help="Max results to return")
     parser.add_argument("--benchmark", action="store_true", help="Run 100-iteration latency benchmark")
     parser.add_argument("--db", type=str, default=str(DEFAULT_DB_PATH), help="Path to SQLite database")
@@ -203,13 +218,14 @@ def main() -> None:
     engine = FTSEngine(db_path=args.db)
 
     print("\n" + "=" * 70)
-    print(f"🔍 QUERY: '{args.query}' | GAME: '{args.game}'")
+    print(f"🔍 QUERY: '{args.query}' | GAME: '{args.game}'" + (f" | SOURCE: '{args.source}'" if args.source else ""))
     print("=" * 70)
 
     results = engine.search(
         query=args.query,
         game_id=args.game,
         encounter_id=args.encounter,
+        source_type=args.source,
         limit=args.limit,
     )
 
@@ -218,11 +234,10 @@ def main() -> None:
     else:
         print(f"\n✅ Found {len(results)} matches in {results[0].latency_ms:.3f} ms:\n")
         for i, res in enumerate(results, start=1):
-            print(f"[{i}] Boss: {res.encounter_id.upper()} | Time: {res.formatted_timestamp} (Score: {res.bm25_score:.3f})")
-            print(f"    Video ID: {res.video_id}")
-            print(f"    Transcript: \"{res.transcript_text}\"\n")
+            print(f"[{i}] Boss: {res.encounter_id.upper()} | {res.source_label} (Score: {res.bm25_score:.3f})")
+            print(f"    Content: \"{res.content_text}\"\n")
 
-    if args.benchmark or True:  # Run benchmark validation automatically
+    if args.benchmark or True:
         print("-" * 70)
         print("📊 LATENCY BENCHMARK (100 Iterations):")
         stats = run_benchmark(engine, query=args.query, game_id=args.game, runs=100)
@@ -232,7 +247,6 @@ def main() -> None:
         print(f"   • p95 Latency: {stats['p95_ms']:.3f} ms")
         print(f"   • Max Latency: {stats['max_ms']:.3f} ms")
 
-        # Invariant check (< 15 ms target)
         if stats["p95_ms"] < 15.0:
             print("\n🎯 INVARIANT PASSED: p95 retrieval latency is well under 15ms!")
         else:

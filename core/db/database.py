@@ -1,7 +1,7 @@
 """SQLite database manager and FTS5 schema initialization for Wayfinder.
 
-Implements the external-content FTS5 pattern with automated triggers
-and WAL mode pragmas for single-digit millisecond query latency.
+Implements a source-agnostic (YouTube, Steam, Wikis) external-content FTS5 pattern
+with automated triggers and WAL mode pragmas for single-digit millisecond query latency.
 """
 
 from __future__ import annotations
@@ -18,38 +18,43 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent / "wayfinder.db"
 
 @dataclass(frozen=True)
 class GuideChunk:
-    """Represents a timestamped gameplay transcript chunk."""
+    """Represents a combat guidance chunk from any source (YouTube, Steam, Wiki)."""
 
     game_id: str
     encounter_id: str
-    video_id: str
-    start_time: float
-    end_time: float
-    transcript_text: str
+    source_type: str  # 'youtube', 'steam', 'wiki'
+    source_ref: str   # Video ID, Steam Guide URL/slug, or Wiki page
+    content_text: str # Transcript or written guide excerpt
+    start_time: float = 0.0  # Video start timestamp in seconds (0.0 for text guides)
+    end_time: float = 0.0    # Video end timestamp in seconds (0.0 for text guides)
     id: Optional[int] = None
 
 
 SCHEMA_SQL = """
--- 1. Main relational store for transcript chunks
+-- 1. Main relational store for multi-source combat guide chunks
 CREATE TABLE IF NOT EXISTS guide_chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     game_id TEXT NOT NULL,
     encounter_id TEXT NOT NULL,
-    video_id TEXT NOT NULL,
-    start_time REAL NOT NULL,
-    end_time REAL NOT NULL,
-    transcript_text TEXT NOT NULL
+    source_type TEXT NOT NULL DEFAULT 'youtube', -- 'youtube', 'steam', 'wiki'
+    source_ref TEXT NOT NULL,
+    start_time REAL NOT NULL DEFAULT 0.0,
+    end_time REAL NOT NULL DEFAULT 0.0,
+    content_text TEXT NOT NULL
 );
 
--- Fast composite index for isolating queries by game and boss encounter
+-- Fast composite indices for filtering by game, encounter, and source type
 CREATE INDEX IF NOT EXISTS idx_chunks_game_encounter 
 ON guide_chunks(game_id, encounter_id);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_source 
+ON guide_chunks(source_type);
 
 -- 2. FTS5 Virtual Table using External Content pattern
 -- content='guide_chunks' points to the relational table, saving disk space and avoiding duplication.
 -- tokenize='unicode61 remove_diacritics 2' handles accents and normalizes case/punctuation.
 CREATE VIRTUAL TABLE IF NOT EXISTS guide_fts USING fts5(
-    transcript_text,
+    content_text,
     content='guide_chunks',
     content_rowid='id',
     tokenize='unicode61 remove_diacritics 2'
@@ -59,24 +64,24 @@ CREATE VIRTUAL TABLE IF NOT EXISTS guide_fts USING fts5(
 CREATE TRIGGER IF NOT EXISTS trg_guide_chunks_ai 
 AFTER INSERT ON guide_chunks 
 BEGIN
-    INSERT INTO guide_fts(rowid, transcript_text) 
-    VALUES (new.id, new.transcript_text);
+    INSERT INTO guide_fts(rowid, content_text) 
+    VALUES (new.id, new.content_text);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_guide_chunks_ad 
 AFTER DELETE ON guide_chunks 
 BEGIN
-    INSERT INTO guide_fts(guide_fts, rowid, transcript_text) 
-    VALUES ('delete', old.id, old.transcript_text);
+    INSERT INTO guide_fts(guide_fts, rowid, content_text) 
+    VALUES ('delete', old.id, old.content_text);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_guide_chunks_au 
 AFTER UPDATE ON guide_chunks 
 BEGIN
-    INSERT INTO guide_fts(guide_fts, rowid, transcript_text) 
-    VALUES ('delete', old.id, old.transcript_text);
-    INSERT INTO guide_fts(rowid, transcript_text) 
-    VALUES (new.id, new.transcript_text);
+    INSERT INTO guide_fts(guide_fts, rowid, content_text) 
+    VALUES ('delete', old.id, old.content_text);
+    INSERT INTO guide_fts(rowid, content_text) 
+    VALUES (new.id, new.content_text);
 END;
 """
 
@@ -91,7 +96,6 @@ def get_connection(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     - temp_store = MEMORY: Stores temporary tables and indices directly in RAM.
     """
     path_str = str(db_path)
-    # Ensure parent directory exists if using a custom file path
     if path_str != ":memory:":
         Path(path_str).parent.mkdir(parents=True, exist_ok=True)
 
@@ -121,16 +125,20 @@ def insert_chunk(conn: sqlite3.Connection, chunk: GuideChunk) -> int:
     """
     cursor = conn.execute(
         """
-        INSERT INTO guide_chunks (game_id, encounter_id, video_id, start_time, end_time, transcript_text)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO guide_chunks (
+            game_id, encounter_id, source_type, source_ref, 
+            start_time, end_time, content_text
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             chunk.game_id,
             chunk.encounter_id,
-            chunk.video_id,
+            chunk.source_type,
+            chunk.source_ref,
             chunk.start_time,
             chunk.end_time,
-            chunk.transcript_text,
+            chunk.content_text,
         ),
     )
     return cursor.lastrowid  # type: ignore[return-value]
@@ -145,17 +153,21 @@ def insert_chunks_batch(conn: sqlite3.Connection, chunks: Iterable[GuideChunk]) 
         (
             c.game_id,
             c.encounter_id,
-            c.video_id,
+            c.source_type,
+            c.source_ref,
             c.start_time,
             c.end_time,
-            c.transcript_text,
+            c.content_text,
         )
         for c in chunks
     ]
     cursor = conn.executemany(
         """
-        INSERT INTO guide_chunks (game_id, encounter_id, video_id, start_time, end_time, transcript_text)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO guide_chunks (
+            game_id, encounter_id, source_type, source_ref, 
+            start_time, end_time, content_text
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )
