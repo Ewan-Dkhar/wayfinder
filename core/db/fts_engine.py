@@ -58,17 +58,32 @@ class SearchResult:
         return f"{self.source_type.title()} ({self.source_ref})"
 
 
+STOP_WORDS = {
+    "how", "to", "what", "where", "when", "why", "is", "are", "the",
+    "a", "an", "can", "do", "does", "i", "you", "my", "me", "for",
+    "in", "on", "of", "with", "and", "or", "so", "be", "about",
+}
+
+
 def sanitize_query(query: str) -> str:
-    """Sanitizes user input into safe FTS5 query syntax.
+    """Sanitizes user input into safe, high-recall FTS5 BM25 query syntax.
     
-    Extracts words/phrases, strips special FTS5 control characters (*, :, ^, etc.)
-    that could cause syntax errors, and formats tokens for BM25 matching.
+    1. Extracts words and phrases, stripping FTS5 control operators.
+    2. Filters out conversational stop words ('how', 'to', 'can I', etc.).
+    3. Combines tokens using 'OR' so BM25 ranks chunks with the highest IDF
+       and term overlap without failing when conversational filler is absent.
     """
-    tokens = re.findall(r"\b[\w\-]+\b", query)
-    if not tokens:
+    raw_tokens = re.findall(r"\b[\w\-]+\b", query)
+    if not raw_tokens:
         return ""
-    escaped_tokens = [f'"{token}"' for token in tokens]
-    return " ".join(escaped_tokens)
+
+    # Filter stop words (case-insensitive)
+    filtered = [t for t in raw_tokens if t.lower() not in STOP_WORDS]
+    target_tokens = filtered if filtered else raw_tokens
+
+    # Wrap each token in double quotes to prevent syntax collisions
+    escaped_tokens = [f'"{token}"' for token in target_tokens]
+    return " OR ".join(escaped_tokens)
 
 
 class FTSEngine:
