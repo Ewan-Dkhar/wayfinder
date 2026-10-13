@@ -6,11 +6,23 @@ for Genichiro Ashina (Ashina Castle) and Guardian Ape (Sunken Valley).
 
 from __future__ import annotations
 
-import sqlite3
+import argparse
+import sys
 from pathlib import Path
 from typing import List
 
-from core.db.database import GuideChunk, get_connection, init_db, insert_chunks_batch
+# Allow running directly as 'python3 core/db/seeds/sekiro_seed.py'
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.db.database import (
+    DEFAULT_DB_PATH,
+    GuideChunk,
+    get_connection,
+    init_db,
+    insert_chunks_batch,
+)
 
 SEKIRO_CHUNKS: List[GuideChunk] = [
     # ---------------------------------------------------------
@@ -151,19 +163,21 @@ SEKIRO_CHUNKS: List[GuideChunk] = [
 ]
 
 
-def seed_sekiro(db_path: Path | str | None = None) -> int:
+def seed_sekiro(db_path: Path | str | None = None, reset: bool = False) -> int:
     """Populates the database with Sekiro seed chunks.
     
     Initializes tables if they do not exist, and inserts all SEKIRO_CHUNKS in a single transaction.
+    If reset=True, deletes existing Sekiro chunks before inserting.
     """
-    if db_path is not None:
-        init_db(db_path)
-        conn = get_connection(db_path)
-    else:
-        init_db()
-        conn = get_connection()
+    target_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
+    init_db(target_path)
+    conn = get_connection(target_path)
 
     with conn:
+        if reset:
+            print("[Seed] Resetting Sekiro chunks...")
+            conn.execute("DELETE FROM guide_chunks WHERE game_id = 'sekiro'")
+
         # Check if already seeded to avoid duplicates
         cur = conn.execute("SELECT COUNT(*) AS count FROM guide_chunks WHERE game_id = 'sekiro'")
         existing = cur.fetchone()["count"]
@@ -177,4 +191,9 @@ def seed_sekiro(db_path: Path | str | None = None) -> int:
 
 
 if __name__ == "__main__":
-    seed_sekiro()
+    parser = argparse.ArgumentParser(description="Seed Sekiro combat guide transcripts into Wayfinder DB")
+    parser.add_argument("--db", type=str, default=str(DEFAULT_DB_PATH), help="Path to SQLite database")
+    parser.add_argument("--reset", action="store_true", help="Delete existing Sekiro chunks and re-seed")
+    args = parser.parse_args()
+
+    seed_sekiro(db_path=args.db, reset=args.reset)
