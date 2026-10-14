@@ -99,7 +99,7 @@ def get_connection(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     if path_str != ":memory:":
         Path(path_str).parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(path_str)
+    conn = sqlite3.connect(path_str, check_same_thread=False)
     conn.row_factory = sqlite3.Row
 
     # Performance pragmas

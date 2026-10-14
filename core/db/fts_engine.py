@@ -176,6 +176,32 @@ class FTSEngine:
         ]
         return results
 
+    def get_indexed_games(self) -> list[dict]:
+        """Returns a list of indexed games with their encounters and chunk counts."""
+        cursor = self.conn.execute(
+            """
+            SELECT game_id, encounter_id, count(*) AS chunk_count 
+            FROM guide_chunks 
+            GROUP BY game_id, encounter_id 
+            ORDER BY game_id, encounter_id
+            """
+        )
+        games_map: dict[str, dict] = {}
+        for row in cursor.fetchall():
+            g_id = row["game_id"]
+            e_id = row["encounter_id"]
+            cnt = row["chunk_count"]
+            if g_id not in games_map:
+                games_map[g_id] = {
+                    "game_id": g_id,
+                    "encounters": [],
+                    "chunk_count": 0,
+                }
+            games_map[g_id]["encounters"].append(e_id)
+            games_map[g_id]["chunk_count"] += cnt
+
+        return list(games_map.values())
+
     def close(self) -> None:
         """Closes the underlying database connection."""
         if self._conn is not None:

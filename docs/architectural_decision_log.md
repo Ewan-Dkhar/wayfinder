@@ -117,6 +117,12 @@ Rather than starting with a flashy UI overlay, Wayfinder is engineered from the 
 * **Decision:** Standardize on `uv` managing `.venv` with Python 3.12.
 * **Rationale:** Resolves and installs packages in milliseconds, manages Python versions automatically, and guarantees pre-built binary wheels for CTranslate2 and Pydantic.
 
+### ADR-013: FastAPI Micro-Daemon with Worker Threadpools & Multi-Threaded SQLite
+* **Date:** Phase 4
+* **Context:** The Tauri overlay requires sub-millisecond status checks, catalog lookups, and combat query responses without freezing when the local SLM is performing token inference or when accessed across multiple threads.
+* **Decision:** Implement a micro FastAPI server ([`core/server.py`](file:///home/ewan/Projects/wayfinder/core/server.py)) using threadpool offloading (`def execute_query`) paired with `sqlite3.connect(..., check_same_thread=False)`. Wrap all query results in an envelope model (`found`, `card`, `telemetry`).
+* **Rationale:** Keeps the asyncio event loop responsive (<1ms `/health` responses) even while local SLM token generation is in flight. Enables safe multi-threaded SQLite reads across AnyIO worker threads while WAL mode eliminates read locks.
+
 ---
 
 ## 3. Current Project State & Verification Matrix
@@ -159,13 +165,14 @@ Now that the backend retrieval, synthesis, and ingestion engines are rock solid,
 ```
 
 #### Detailed Steps for Phase 4:
-1. **Lightweight Daemon Server (`core/server.py`):**
-   * Build a micro FastAPI / Uvicorn server exposing:
-     * `POST /query`: takes `{ "game_id": "sekiro", "query": "..." }`, returns `TacticalCard`.
-     * `GET /games`: lists indexed games and encounters.
-     * `GET /health`: checks daemon and local LLM status.
+1. **Lightweight Daemon Server ([`core/server.py`](file:///home/ewan/Projects/wayfinder/core/server.py)) — [COMPLETED]:**
+   * Built FastAPI / Uvicorn micro-daemon with `check_same_thread=False` and threadpool routing.
+   * `POST /query`: takes `{ "game_id": "sekiro", "query": "..." }`, returns `TacticalCard` envelope with sub-ms FTS and 20ms fallback.
+   * `GET /games`: lists indexed games, encounters, and chunk counts.
+   * `GET /health`: checks daemon status, chunk counts, and local LLM availability.
+   * Verified with 100% passing tests in [`tests/test_server.py`](file:///home/ewan/Projects/wayfinder/tests/test_server.py).
 
-2. **Scaffold Tauri v2 Frameless Window (`desktop/`):**
+2. **Scaffold Tauri v2 Frameless Window (`desktop/`) — [UP NEXT]:**
    * Configure `tauri.conf.json`:
      * `transparent: true`
      * `decorations: false`
