@@ -3,6 +3,7 @@
  * Pure Vanilla DOM State Controller & High-Speed API Bridge
  */
 
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 // -----------------------------------------------------------------------------
@@ -290,7 +291,18 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  // Listen for Rust Alt+G toggle event to auto-focus and select search input
+  try {
+    listen("focus-input", () => {
+      queryInput.focus();
+      queryInput.select();
+    });
+  } catch (err) {
+    console.debug("Tauri event listener not active (browser dev environment):", err);
+  }
+
   // Initial daemon health probe and interval check
   checkDaemonHealth();
   setInterval(checkDaemonHealth, 5000);
 });
+
