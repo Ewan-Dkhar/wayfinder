@@ -54,14 +54,38 @@ interface HealthResponse {
   indexed_chunks: number;
 }
 
+interface IngestResponse {
+  success: boolean;
+  game_id: string;
+  encounter_id: string;
+  chunks_indexed: number;
+  source_type: string;
+  source_ref: string;
+  latency_ms: number;
+  message: string;
+}
+
+interface GameSummary {
+  game_id: string;
+  encounters: string[];
+  chunk_count: number;
+}
+
+interface GamesResponse {
+  games: GameSummary[];
+}
+
 const DAEMON_API_URL = "http://127.0.0.1:8765";
 
 // -----------------------------------------------------------------------------
-// Cached DOM Elements
+// Cached DOM Elements & Active State
 // -----------------------------------------------------------------------------
+
+let activeGameId: string = "sekiro";
 
 let queryInput: HTMLInputElement;
 let searchBtn: HTMLButtonElement;
+let gameSelect: HTMLSelectElement;
 let daemonStatus: HTMLElement;
 let daemonLabel: HTMLElement;
 
@@ -78,6 +102,29 @@ let cuesContainer: HTMLElement;
 let cardSetup: HTMLElement;
 let cardTelemetry: HTMLElement;
 let emptyMessage: HTMLElement;
+
+// Ingestion Elements
+let ingestModal: HTMLElement;
+let btnOpenIngest: HTMLButtonElement;
+let btnCloseIngest: HTMLButtonElement;
+let btnCancelIngest: HTMLButtonElement;
+let btnSubmitIngest: HTMLButtonElement;
+let btnSubmitText: HTMLElement;
+let ingestGame: HTMLInputElement;
+let ingestBoss: HTMLInputElement;
+let tabUrl: HTMLButtonElement;
+let tabFile: HTMLButtonElement;
+let panelUrl: HTMLElement;
+let panelFile: HTMLElement;
+let ingestUrl: HTMLInputElement;
+let dropzone: HTMLElement;
+let dropzoneText: HTMLElement;
+let fileInput: HTMLInputElement;
+let ingestContent: HTMLTextAreaElement;
+let ingestFeedback: HTMLElement;
+
+let activeIngestTab: "url" | "file" = "url";
+let selectedFileName: string | null = null;
 
 // -----------------------------------------------------------------------------
 // State Management
@@ -124,6 +171,34 @@ async function checkDaemonHealth(): Promise<void> {
   }
 }
 
+async function fetchGamesCatalog(selectGameId?: string): Promise<void> {
+  try {
+    const res = await fetch(`${DAEMON_API_URL}/games`, { method: "GET" });
+    if (!res.ok) return;
+    const data: GamesResponse = await res.json();
+    if (!data.games || data.games.length === 0) return;
+
+    gameSelect.innerHTML = "";
+    data.games.forEach((g) => {
+      const opt = document.createElement("option");
+      opt.value = g.game_id;
+      opt.textContent = g.game_id.replace(/[_-]/g, " ").toUpperCase();
+      gameSelect.appendChild(opt);
+    });
+
+    if (selectGameId && data.games.some((g) => g.game_id === selectGameId)) {
+      activeGameId = selectGameId;
+    } else if (!data.games.some((g) => g.game_id === activeGameId)) {
+      activeGameId = data.games[0].game_id;
+    }
+
+    gameSelect.value = activeGameId;
+    ingestGame.value = activeGameId;
+  } catch (err) {
+    console.debug("Could not fetch games catalog:", err);
+  }
+}
+
 async function executeSearch(query: string): Promise<void> {
   const trimmed = query.trim();
   if (!trimmed) {
@@ -138,7 +213,7 @@ async function executeSearch(query: string): Promise<void> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        game_id: "sekiro",
+        game_id: activeGameId,
         query: trimmed,
       }),
     });
@@ -226,6 +301,127 @@ function escapeHTML(str: string): string {
 }
 
 // -----------------------------------------------------------------------------
+// Ingestion Modal Management
+// -----------------------------------------------------------------------------
+
+function openIngestModal(): void {
+  ingestModal.classList.remove("hidden");
+  ingestFeedback.classList.add("hidden");
+  ingestFeedback.textContent = "";
+  ingestBoss.focus();
+}
+
+function closeIngestModal(): void {
+  ingestModal.classList.add("hidden");
+  queryInput.focus();
+}
+
+function switchIngestTab(tab: "url" | "file"): void {
+  activeIngestTab = tab;
+  tabUrl.classList.toggle("active", tab === "url");
+  tabFile.classList.toggle("active", tab === "file");
+  panelUrl.classList.toggle("hidden", tab !== "url");
+  panelFile.classList.toggle("hidden", tab !== "file");
+}
+
+async function handleFileSelected(file: File): Promise<void> {
+  selectedFileName = file.name;
+  dropzoneText.innerHTML = `Selected: <strong>${escapeHTML(file.name)}</strong> (${(file.size / 1024).toFixed(1)} KB)`;
+
+  try {
+    const text = await file.text();
+    ingestContent.value = text;
+
+    // Auto-fill boss name if empty
+    if (!ingestBoss.value.trim()) {
+      const cleanName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
+      ingestBoss.value = cleanName;
+    }
+  } catch (err: any) {
+    showIngestFeedback(`Failed to read file: ${err?.message || err}`, "error");
+  }
+}
+
+function showIngestFeedback(message: string, type: "success" | "error" | "loading"): void {
+  ingestFeedback.className = `ingest-feedback ${type}`;
+  ingestFeedback.textContent = message;
+  ingestFeedback.classList.remove("hidden");
+}
+
+async function executeIngest(): Promise<void> {
+  const gameId = ingestGame.value.trim() || "sekiro";
+  const encounterId = ingestBoss.value.trim();
+
+  if (!encounterId) {
+    showIngestFeedback("Boss or Encounter name is required.", "error");
+    ingestBoss.focus();
+    return;
+  }
+
+  const payload: any = {
+    game_id: gameId,
+    encounter_id: encounterId,
+  };
+
+  if (activeIngestTab === "url") {
+    const url = ingestUrl.value.trim();
+    if (!url) {
+      showIngestFeedback("Please enter a valid YouTube or Steam URL.", "error");
+      ingestUrl.focus();
+      return;
+    }
+    payload.url = url;
+    payload.source_type = "url";
+  } else {
+    const content = ingestContent.value.trim();
+    if (!content) {
+      showIngestFeedback("Please upload a .md file or paste guide text.", "error");
+      ingestContent.focus();
+      return;
+    }
+    payload.content = content;
+    payload.source_type = "markdown";
+    payload.filename = selectedFileName || `${encounterId}_guide.md`;
+  }
+
+  // Set loading state
+  btnSubmitIngest.disabled = true;
+  btnSubmitText.textContent = "Indexing...";
+  showIngestFeedback("Parsing and indexing combat chunks into SQLite FTS5...", "loading");
+
+  try {
+    const res = await fetch(`${DAEMON_API_URL}/ingest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data: IngestResponse = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.message || `Ingest failed with status ${res.status}`);
+    }
+
+    showIngestFeedback(`✅ ${data.message}`, "success");
+    checkDaemonHealth();
+    await fetchGamesCatalog(data.game_id);
+
+    // Auto-fill search with the newly indexed encounter and close modal after 1.2s
+    setTimeout(() => {
+      queryInput.value = encounterId;
+      closeIngestModal();
+      executeSearch(encounterId);
+    }, 1200);
+
+  } catch (err: any) {
+    showIngestFeedback(`❌ ${err?.message || err}`, "error");
+  } finally {
+    btnSubmitIngest.disabled = false;
+    btnSubmitText.textContent = "Index Combat Intel";
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Window Hiding & Focus Hand-Off
 // -----------------------------------------------------------------------------
 
@@ -243,7 +439,7 @@ async function hideHUDWindow(): Promise<void> {
 // -----------------------------------------------------------------------------
 
 window.addEventListener("DOMContentLoaded", () => {
-  // Bind Elements
+  // Bind Search & HUD Elements
   queryInput = document.getElementById("query-input") as HTMLInputElement;
   searchBtn = document.getElementById("search-btn") as HTMLButtonElement;
   daemonStatus = document.getElementById("daemon-status") as HTMLElement;
@@ -263,6 +459,36 @@ window.addEventListener("DOMContentLoaded", () => {
   cardTelemetry = document.getElementById("card-telemetry") as HTMLElement;
   emptyMessage = document.getElementById("empty-message") as HTMLElement;
 
+  // Bind Game Selector
+  gameSelect = document.getElementById("game-select") as HTMLSelectElement;
+  gameSelect.addEventListener("change", () => {
+    activeGameId = gameSelect.value;
+    ingestGame.value = activeGameId;
+    if (queryInput.value.trim()) {
+      executeSearch(queryInput.value);
+    }
+  });
+
+  // Bind Ingestion Elements
+  ingestModal = document.getElementById("ingest-modal") as HTMLElement;
+  btnOpenIngest = document.getElementById("btn-open-ingest") as HTMLButtonElement;
+  btnCloseIngest = document.getElementById("btn-close-ingest") as HTMLButtonElement;
+  btnCancelIngest = document.getElementById("btn-cancel-ingest") as HTMLButtonElement;
+  btnSubmitIngest = document.getElementById("btn-submit-ingest") as HTMLButtonElement;
+  btnSubmitText = document.getElementById("btn-submit-text") as HTMLElement;
+  ingestGame = document.getElementById("ingest-game") as HTMLInputElement;
+  ingestBoss = document.getElementById("ingest-boss") as HTMLInputElement;
+  tabUrl = document.getElementById("tab-url") as HTMLButtonElement;
+  tabFile = document.getElementById("tab-file") as HTMLButtonElement;
+  panelUrl = document.getElementById("panel-url") as HTMLElement;
+  panelFile = document.getElementById("panel-file") as HTMLElement;
+  ingestUrl = document.getElementById("ingest-url") as HTMLInputElement;
+  dropzone = document.getElementById("dropzone") as HTMLElement;
+  dropzoneText = document.getElementById("dropzone-text") as HTMLElement;
+  fileInput = document.getElementById("file-input") as HTMLInputElement;
+  ingestContent = document.getElementById("ingest-content") as HTMLTextAreaElement;
+  ingestFeedback = document.getElementById("ingest-feedback") as HTMLElement;
+
   // Search input events
   searchBtn.addEventListener("click", () => executeSearch(queryInput.value));
   queryInput.addEventListener("keydown", (e) => {
@@ -273,10 +499,14 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Global ESC key listener
+  // Global ESC key listener (closes modal first if open, else hides HUD)
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
-      hideHUDWindow();
+      if (!ingestModal.classList.contains("hidden")) {
+        closeIngestModal();
+      } else {
+        hideHUDWindow();
+      }
     }
   });
 
@@ -291,6 +521,39 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  // Ingestion Modal Listeners
+  btnOpenIngest.addEventListener("click", openIngestModal);
+  btnCloseIngest.addEventListener("click", closeIngestModal);
+  btnCancelIngest.addEventListener("click", closeIngestModal);
+  tabUrl.addEventListener("click", () => switchIngestTab("url"));
+  tabFile.addEventListener("click", () => switchIngestTab("file"));
+  btnSubmitIngest.addEventListener("click", executeIngest);
+
+  // File Dropzone Handling
+  dropzone.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files && fileInput.files[0]) {
+      handleFileSelected(fileInput.files[0]);
+    }
+  });
+
+  dropzone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropzone.classList.add("drag-over");
+  });
+
+  dropzone.addEventListener("dragleave", () => {
+    dropzone.classList.remove("drag-over");
+  });
+
+  dropzone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropzone.classList.remove("drag-over");
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFileSelected(e.dataTransfer.files[0]);
+    }
+  });
+
   // Listen for Rust Alt+G toggle event to auto-focus and select search input
   try {
     listen("focus-input", () => {
@@ -301,8 +564,9 @@ window.addEventListener("DOMContentLoaded", () => {
     console.debug("Tauri event listener not active (browser dev environment):", err);
   }
 
-  // Initial daemon health probe and interval check
+  // Initial daemon health probe, game catalog load, and interval check
   checkDaemonHealth();
+  fetchGamesCatalog();
   setInterval(checkDaemonHealth, 5000);
 });
 

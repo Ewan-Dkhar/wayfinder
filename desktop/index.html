@@ -11,7 +11,7 @@
   </head>
   <body>
     <div id="hud-root" class="hud-window">
-      <!-- Top Bar: Header, Game Pill, Status Indicator -->
+      <!-- Top Bar: Header, Ingest Button, Game Pill, Status Indicator -->
       <header class="hud-header" data-tauri-drag-region>
         <div class="brand">
           <span class="brand-glyph">✦</span>
@@ -19,7 +19,12 @@
           <span class="brand-badge">HUD</span>
         </div>
         <div class="hud-meta">
-          <div id="game-pill" class="pill pill-game">SEKIRO</div>
+          <button id="btn-open-ingest" class="header-action-btn" title="Index new guide (YouTube, Steam, or File)">
+            <span class="action-icon">📥</span> Ingest
+          </button>
+          <select id="game-select" class="pill pill-game" title="Switch active game">
+            <option value="sekiro">SEKIRO</option>
+          </select>
           <div id="daemon-status" class="status-indicator status-offline" title="Checking daemon status...">
             <span class="status-dot"></span>
             <span id="daemon-label" class="status-text">CONNECTING</span>
@@ -99,6 +104,68 @@
           <div class="empty-desc">Try simpler keywords like boss name or attack type.</div>
         </div>
       </main>
+
+      <!-- Ingestion Modal Drawer -->
+      <div id="ingest-modal" class="ingest-modal hidden">
+        <div class="modal-card">
+          <div class="modal-header">
+            <div class="modal-title">
+              <span class="title-glyph">📥</span> INDEX COMBAT GUIDE
+            </div>
+            <button id="btn-close-ingest" class="modal-close" title="Close (ESC)">✕</button>
+          </div>
+
+          <div class="modal-body">
+            <!-- Game and Encounter Selection -->
+            <div class="form-row">
+              <div class="form-field flex-1">
+                <label for="ingest-game">Game</label>
+                <input id="ingest-game" type="text" value="sekiro" spellcheck="false" />
+              </div>
+              <div class="form-field flex-2">
+                <label for="ingest-boss">Boss / Encounter</label>
+                <input id="ingest-boss" type="text" placeholder="e.g. Guardian Ape" spellcheck="false" />
+              </div>
+            </div>
+
+            <!-- Source Type Selector -->
+            <div class="source-tabs">
+              <button type="button" id="tab-url" class="source-tab active">🔗 URL (YouTube / Steam)</button>
+              <button type="button" id="tab-file" class="source-tab">📄 Markdown / File</button>
+            </div>
+
+            <!-- Panel: URL -->
+            <div id="panel-url" class="tab-panel">
+              <div class="form-field">
+                <input id="ingest-url" type="url" placeholder="YouTube URL or Steam Community Guide URL..." />
+                <span class="field-hint">Supports YouTube videos (automatic subtitle extraction) &amp; Steam Guides.</span>
+              </div>
+            </div>
+
+            <!-- Panel: File & Text -->
+            <div id="panel-file" class="tab-panel hidden">
+              <div class="dropzone" id="dropzone">
+                <span class="dropzone-icon">📁</span>
+                <span id="dropzone-text" class="dropzone-text">Click to choose or drop <strong>.md</strong> file</span>
+                <input type="file" id="file-input" accept=".md,.markdown,.txt" class="hidden" />
+              </div>
+              <div class="form-field mt-2">
+                <textarea id="ingest-content" rows="3" placeholder="Or paste raw guide text/markdown here..."></textarea>
+              </div>
+            </div>
+
+            <!-- Status Feedback Banner -->
+            <div id="ingest-feedback" class="ingest-feedback hidden"></div>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" id="btn-cancel-ingest" class="btn-secondary">Cancel</button>
+            <button type="button" id="btn-submit-ingest" class="btn-primary">
+              <span id="btn-submit-text">Index Combat Intel</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

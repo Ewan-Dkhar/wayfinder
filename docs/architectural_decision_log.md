@@ -141,6 +141,12 @@ Rather than starting with a flashy UI overlay, Wayfinder is engineered from the 
 * **Decision:** Implement `tauri-plugin-notification` to emit a native OS desktop toast on startup via the FreeDesktop D-Bus notification service on Linux and WinRT Action Center on Windows.
 * **Rationale:** Requires zero window rendering, steals zero keyboard/mouse focus from running games, and immediately informs the player of the `Alt + G` summon hotkey and borderless display requirement.
 
+### ADR-017: Unified On-Demand Ingestion API (POST /ingest) & HUD Ingestion Drawer
+* **Date:** Phase 4 Extension
+* **Context:** Players need to ingest new combat guides on the fly directly from the HUD overlay without restarting servers or using CLI terminal commands.
+* **Decision:** Build a unified `POST /ingest` endpoint in [`core/server.py`](file:///home/ewan/Projects/wayfinder/core/server.py) supporting polymorphic ingestion (YouTube video URLs via `yt-dlp`, Steam Community Guide URLs, or direct in-memory Markdown text). The frontend reads dropped/selected `.md` files in memory using `file.text()` to eliminate temporary disk I/O. Encounter identifiers are automatically canonicalized via `slugify()` to prevent case-sensitive B-Tree fragmentation in SQLite.
+* **Rationale:** Zero disk temporary writes, zero extra MIME dependencies (`python-multipart` avoided), and immediate index synchronization with FTS5 triggers for instant sub-millisecond searchability.
+
 ---
 
 ## 3. Current Project State & Verification Matrix

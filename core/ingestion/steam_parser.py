@@ -141,20 +141,30 @@ class SteamGuideParser:
             latency_ms=latency_ms,
         )
 
-    def parse_markdown_file(self, file_path: Path | str) -> SteamParseResult:
-        """Parses a local Markdown guide file."""
+    def parse_markdown_text(
+        self,
+        content: str,
+        source_id: str = "custom_guide",
+        title: Optional[str] = None,
+    ) -> SteamParseResult:
+        """Parses in-memory Markdown content into atomic combat chunks."""
         t_start = time.perf_counter_ns()
-        path = Path(file_path)
-        content = path.read_text(encoding="utf-8")
-
-        title = path.stem.replace("_", " ").title()
-        chunks = chunk_text_by_sections(content, default_title=title)
+        guide_title = title or source_id.replace("_", " ").title()
+        chunks = chunk_text_by_sections(content, default_title=guide_title)
 
         t_end = time.perf_counter_ns()
         return SteamParseResult(
-            source_id=f"local_{path.stem}",
-            title=title,
+            source_id=source_id,
+            title=guide_title,
             chunks=chunks,
             section_count=len(chunks),
             latency_ms=(t_end - t_start) / 1_000_000.0,
         )
+
+    def parse_markdown_file(self, file_path: Path | str) -> SteamParseResult:
+        """Parses a local Markdown guide file."""
+        path = Path(file_path)
+        content = path.read_text(encoding="utf-8")
+        title = path.stem.replace("_", " ").title()
+        return self.parse_markdown_text(content, source_id=f"local_{path.stem}", title=title)
+

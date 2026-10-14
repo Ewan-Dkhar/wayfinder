@@ -106,3 +106,66 @@ def test_query_validation_error(client: TestClient):
     """Verifies 422 error for empty or invalid query strings."""
     response = client.post("/query", json={"game_id": "sekiro", "query": ""})
     assert response.status_code == 422
+
+
+def test_ingest_markdown_and_query(client: TestClient):
+    """Verifies markdown guide ingestion, slugification, and immediate queryability."""
+    markdown_content = """# Phase 1: Roaring Leap
+When the beast crouches low and lets out a high pitched shriek, it is preparing a leaping slam.
+Jump backwards or sprint diagonally to clear the blast radius.
+
+# Phase 2: Terror Screech
+The headless terror scream builds fear rapidly.
+Equip the Phoenix Lilac Umbrella or sprint far away to avoid sudden death.
+"""
+    payload = {
+        "game_id": "sekiro",
+        "encounter_id": "Great Guardian Ape",  # Tests slugification -> great_guardian_ape
+        "source_type": "markdown",
+        "content": markdown_content,
+        "filename": "ape_guide.md",
+    }
+
+    # 1. Ingest
+    res = client.post("/ingest", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert data["encounter_id"] == "great_guardian_ape"
+    assert data["chunks_indexed"] >= 2
+    assert data["latency_ms"] > 0.0
+
+    # 2. Immediately query the newly indexed chunks
+    query_payload = {
+        "game_id": "sekiro",
+        "query": "terror screech phoenix lilac umbrella",
+        "encounter_id": "great_guardian_ape",
+    }
+    q_res = client.post("/query", json=query_payload)
+    assert q_res.status_code == 200
+    q_data = q_res.json()
+    assert q_data["found"] is True
+    assert q_data["card"] is not None
+    assert "great guardian ape" in q_data["card"]["encounter"].lower()
+
+
+def test_ingest_missing_content_and_url(client: TestClient):
+    """Verifies 400 when neither URL nor content is provided."""
+    payload = {
+        "game_id": "sekiro",
+        "encounter_id": "genichiro",
+    }
+    res = client.post("/ingest", json=payload)
+    assert res.status_code == 400
+
+
+def test_ingest_unsupported_url(client: TestClient):
+    """Verifies 400 when unsupported domain URL is provided."""
+    payload = {
+        "game_id": "sekiro",
+        "encounter_id": "genichiro",
+        "url": "https://example.com/some_random_page",
+    }
+    res = client.post("/ingest", json=payload)
+    assert res.status_code == 400
+

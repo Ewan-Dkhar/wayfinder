@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -26,12 +28,22 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from core.db.database import DEFAULT_DB_PATH
+from core.db.database import DEFAULT_DB_PATH, GuideChunk, insert_chunks_batch
+from core.ingestion.chunker import chunk_cues_sliding_window
+from core.ingestion.steam_parser import SteamGuideParser
+from core.ingestion.transcriber import WhisperTranscriber
+from core.ingestion.yt_parser import YouTubeCaptionParser
 from core.llm.schemas import TacticalCard
 from core.llm.synthesizer import TacticalSynthesizer
 
 DEFAULT_HOST = os.getenv("WAYFINDER_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.getenv("WAYFINDER_PORT", "8765"))
+
+
+def slugify(text: str) -> str:
+    """Normalizes game and encounter names into canonical identifiers."""
+    clean = re.sub(r"[^\w\s-]", "", text).strip().lower()
+    return re.sub(r"[-\s]+", "_", clean)
 
 
 # -----------------------------------------------------------------------------
@@ -91,6 +103,33 @@ class GamesResponse(BaseModel):
     """List of all indexed games and their available encounters."""
 
     games: List[GameSummary]
+
+
+class IngestRequest(BaseModel):
+    """Payload to ingest combat guides into the local knowledge base."""
+
+    game_id: str = Field(default="sekiro", description="Target game (e.g. 'sekiro')")
+    encounter_id: str = Field(..., description="Target encounter/boss (e.g. 'guardian_ape')", min_length=1)
+    source_type: str = Field(default="auto", description="'url', 'markdown', or 'auto'")
+    url: Optional[str] = Field(default=None, description="YouTube, Steam Community Guide, or Wiki URL")
+    content: Optional[str] = Field(default=None, description="Raw Markdown or text guide content")
+    filename: Optional[str] = Field(default=None, description="Optional filename or source reference")
+    window_s: float = Field(default=35.0, description="YouTube sliding window in seconds")
+    stride_s: float = Field(default=15.0, description="YouTube window stride in seconds")
+    force_whisper: bool = Field(default=False, description="Force Whisper CPU transcription for video")
+
+
+class IngestResponse(BaseModel):
+    """Result of guide ingestion and index commit."""
+
+    success: bool
+    game_id: str
+    encounter_id: str
+    chunks_indexed: int
+    source_type: str
+    source_ref: str
+    latency_ms: float
+    message: str
 
 
 # -----------------------------------------------------------------------------
@@ -233,6 +272,137 @@ def create_app(db_path: Path | str = DEFAULT_DB_PATH) -> FastAPI:
             card=card,
             telemetry=telemetry_model,
             message=None,
+        )
+
+    @app.post("/ingest", response_model=IngestResponse, tags=["Ingestion"])
+    def ingest_guide(payload: IngestRequest, request: Request) -> IngestResponse:
+        """Ingests YouTube, Steam Community, or Markdown guides into SQLite FTS5.
+        
+        Runs asynchronously in a threadpool so video transcription or network fetches
+        do not block HUD searches or health checks.
+        """
+        synthesizer: TacticalSynthesizer = request.app.state.synthesizer
+        conn = synthesizer.fts_engine.conn
+        t_start = time.perf_counter_ns()
+
+        clean_game = slugify(payload.game_id)
+        clean_encounter = slugify(payload.encounter_id)
+        if not clean_encounter:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid encounter_id: must contain valid alphanumeric characters.",
+            )
+
+        chunks: List[GuideChunk] = []
+        source_type = "wiki"
+        source_ref = payload.filename or f"guide_{clean_encounter}"
+
+        # Branch A: URL Ingestion (YouTube or Steam)
+        if payload.url:
+            url = payload.url.strip()
+            if "youtube.com" in url or "youtu.be" in url:
+                source_type = "youtube"
+                yt_parser = YouTubeCaptionParser()
+                yt_res = yt_parser.parse(url)
+                source_ref = yt_res.video_id
+
+                cues = []
+                if yt_res.has_subtitles and not payload.force_whisper:
+                    cues = yt_res.cues
+                else:
+                    transcriber = WhisperTranscriber()
+                    cues = transcriber.transcribe(url)
+
+                raw_chunks = chunk_cues_sliding_window(
+                    cues=cues,
+                    window_seconds=payload.window_s,
+                    stride_seconds=payload.stride_s,
+                )
+                chunks = [
+                    GuideChunk(
+                        game_id=clean_game,
+                        encounter_id=clean_encounter,
+                        source_type="youtube",
+                        source_ref=source_ref,
+                        start_time=c.start_time,
+                        end_time=c.end_time,
+                        content_text=c.content_text,
+                    )
+                    for c in raw_chunks
+                ]
+            elif "steamcommunity.com" in url:
+                source_type = "steam"
+                steam_parser = SteamGuideParser()
+                steam_res = steam_parser.parse_url(url)
+                source_ref = steam_res.source_id
+                chunks = [
+                    GuideChunk(
+                        game_id=clean_game,
+                        encounter_id=clean_encounter,
+                        source_type="steam",
+                        source_ref=source_ref,
+                        start_time=0.0,
+                        end_time=0.0,
+                        content_text=c.content_text,
+                    )
+                    for c in steam_res.chunks
+                ]
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unsupported URL domain. Supported: YouTube ('youtube.com', 'youtu.be') and Steam ('steamcommunity.com').",
+                )
+
+        # Branch B: Direct Markdown or Text content
+        elif payload.content:
+            source_type = "wiki"
+            source_ref = payload.filename or f"guide_{clean_encounter}"
+            steam_parser = SteamGuideParser()
+            parsed = steam_parser.parse_markdown_text(
+                content=payload.content,
+                source_id=source_ref,
+                title=payload.encounter_id,
+            )
+            chunks = [
+                GuideChunk(
+                    game_id=clean_game,
+                    encounter_id=clean_encounter,
+                    source_type="wiki",
+                    source_ref=source_ref,
+                    start_time=0.0,
+                    end_time=0.0,
+                    content_text=c.content_text,
+                )
+                for c in parsed.chunks
+            ]
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Either 'url' or 'content' must be provided for guide ingestion.",
+            )
+
+        if not chunks:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Parsed source yielded 0 combat chunks. Verify URL or Markdown formatting.",
+            )
+
+        # Commit to SQLite (Triggers automatically synchronize guide_fts table)
+        inserted_count = insert_chunks_batch(conn, chunks)
+        conn.commit()
+
+        t_end = time.perf_counter_ns()
+        latency_ms = (t_end - t_start) / 1_000_000.0
+
+        return IngestResponse(
+            success=True,
+            game_id=clean_game,
+            encounter_id=clean_encounter,
+            chunks_indexed=inserted_count,
+            source_type=source_type,
+            source_ref=source_ref,
+            latency_ms=latency_ms,
+            message=f"Successfully indexed {inserted_count} combat chunks for '{clean_encounter}' in {latency_ms:.1f}ms.",
         )
 
     return app
