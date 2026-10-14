@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wayfinder Tactical HUD</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="hud-root" class="hud-window">
+      <!-- Top Bar: Header, Game Pill, Status Indicator -->
+      <header class="hud-header" data-tauri-drag-region>
+        <div class="brand">
+          <span class="brand-glyph">✦</span>
+          <span class="brand-title">WAYFINDER</span>
+          <span class="brand-badge">HUD</span>
+        </div>
+        <div class="hud-meta">
+          <div id="game-pill" class="pill pill-game">SEKIRO</div>
+          <div id="daemon-status" class="status-indicator status-offline" title="Checking daemon status...">
+            <span class="status-dot"></span>
+            <span id="daemon-label" class="status-text">CONNECTING</span>
+          </div>
+          <div class="shortcut-tag"><kbd>ESC</kbd> to hide</div>
+        </div>
+      </header>
+
+      <!-- Search Palette -->
+      <section class="search-section">
+        <div class="search-bar">
+          <span class="search-icon">🔍</span>
+          <input
+            id="query-input"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Search enemy attack, boss move, or counter..."
+            autofocus
+          />
+          <button id="search-btn" class="search-submit" title="Execute search (Enter)">
+            <span class="submit-arrow">↵</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Content Area -->
+      <main id="hud-content" class="hud-content">
+        <!-- Initial Idle State -->
+        <div id="state-idle" class="content-state state-idle">
+          <div class="idle-hints">
+            <span class="hint-label">Quick Tactics:</span>
+            <button class="hint-chip" data-query="lightning reversal">lightning reversal</button>
+            <button class="hint-chip" data-query="mikiri counter">mikiri counter</button>
+            <button class="hint-chip" data-query="terror roar">terror roar</button>
+          </div>
+        </div>
+
+        <!-- Searching Loading State -->
+        <div id="state-loading" class="content-state state-loading hidden">
+          <div class="shimmer-bar"></div>
+          <div class="loading-label">Synthesizing tactical combat card...</div>
+        </div>
+
+        <!-- Tactical Card Display -->
+        <div id="state-card" class="content-state state-card hidden">
+          <div class="card-header">
+            <div class="encounter-info">
+              <span id="card-encounter" class="encounter-name">GENICHIRO ASHINA</span>
+              <span id="card-phase" class="encounter-phase">Phase 3</span>
+            </div>
+            <div id="card-source" class="source-badge">YouTube 3:30</div>
+          </div>
+
+          <div id="card-summary" class="card-summary">
+            Mikiri counter the thrust or head-stomp the sweep after jump slam.
+          </div>
+
+          <!-- 3-Bullet Combat Loop -->
+          <div class="cues-list" id="cues-container">
+            <!-- Populated via TypeScript -->
+          </div>
+
+          <!-- Card Footer & Telemetry -->
+          <footer class="card-footer">
+            <div id="card-setup" class="key-setup-list"></div>
+            <div id="card-telemetry" class="telemetry-badge">
+              0.15ms retrieval | 20ms synthesis
+            </div>
+          </footer>
+        </div>
+
+        <!-- Empty / No Match State -->
+        <div id="state-empty" class="content-state state-empty hidden">
+          <div class="empty-icon">🛡️</div>
+          <div id="empty-message" class="empty-title">No tactics found for this move.</div>
+          <div class="empty-desc">Try simpler keywords like boss name or attack type.</div>
+        </div>
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
