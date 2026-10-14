@@ -11,6 +11,7 @@
     "core:window:allow-close",
     "core:event:default",
     "global-shortcut:default",
+    "notification:default",
     "opener:default"
   ]
 }
