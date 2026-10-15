@@ -166,6 +166,15 @@ Rather than starting with a flashy UI overlay, Wayfinder is engineered from the 
   3. In development source mode, seamlessly use the local workspace database while supporting `WAYFINDER_DB_PATH` overrides for unit tests.
 * **Rationale:** Completely insulates the application from read-only mount crashes, ensures 100% persistence for all user-ingested combat guides across application updates, and preserves seamless zero-configuration development in the git workspace.
 
+### ADR-020: Managed Tauri Sidecar Lifecycle & Zombie Process Prevention
+* **Date:** Phase 4 Extension
+* **Context:** Spawning background services like FastAPI via child processes without active lifecycle management creates orphaned zombie processes when the GUI exits. On subsequent boots, the new instance crashes with `OSError: [Errno 98] Address already in use: 127.0.0.1:8765`, locking database files and leaving the HUD disconnected.
+* **Decision:** Implement active child process supervision in [`desktop/src-tauri/src/lib.rs`](../desktop/src-tauri/src/lib.rs):
+  1. Wrap the spawned sidecar `CommandChild` handle inside a thread-safe `DaemonProcess(Mutex<Option<CommandChild>>)` managed state.
+  2. Hook into Tauri's `exit_app` invoke command and the `RunEvent::ExitRequested` event loop to immediately call `child.kill()`, sending `SIGKILL` (Unix) / `TerminateProcess` (Windows).
+  3. Include a graceful development fallback: if the compiled sidecar binary is absent from `binaries/`, log a non-fatal warning and assume an external development daemon is running at `http://127.0.0.1:8765`.
+* **Rationale:** Completely eliminates zombie daemon processes, prevents port `8765` collisions on app restart, and ensures 100% reliable background process termination without requiring terminal commands.
+
 ---
 
 ## 3. Current Project State & Verification Matrix
