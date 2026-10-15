@@ -175,6 +175,15 @@ Rather than starting with a flashy UI overlay, Wayfinder is engineered from the 
   3. Include a graceful development fallback: if the compiled sidecar binary is absent from `binaries/`, log a non-fatal warning and assume an external development daemon is running at `http://127.0.0.1:8765`.
 * **Rationale:** Completely eliminates zombie daemon processes, prevents port `8765` collisions on app restart, and ensures 100% reliable background process termination without requiring terminal commands.
 
+### ADR-021: Standalone Micro-Daemon Freezing with Spec File & Target-Triple Sidecar Staging
+* **Date:** Phase 4 Extension
+* **Context:** Python backends distributed via PyInstaller crash on launch if dynamic packages (`uvicorn`, `yt-dlp`, `ctranslate2`) are not explicitly configured with hidden imports and bundled native C++ shared libraries. Furthermore, passing module strings to `uvicorn.run("core.server:app")` fails inside PyInstaller's frozen environment because the entrypoint runs as `__main__` rather than an importable package module.
+* **Decision:**
+  1. Author [`wayfinder-daemon.spec`](../wayfinder-daemon.spec) with `collect_all("yt_dlp")`, `collect_all("faster_whisper")`, and `collect_all("ctranslate2")`, bundling the initial `wayfinder.db` seed and all dynamic uvicorn protocols (`uvicorn.loops.asyncio`, `uvicorn.protocols.http.h11_impl`, `uvicorn.lifespan.on`).
+  2. Pass the instantiated FastAPI `app` object directly to `uvicorn.run(app, ...)` in [`core/server.py`](../core/server.py), completely bypassing dynamic module import resolution in frozen binaries.
+  3. Create an automated sidecar build script [`scripts/build_sidecar.py`](../scripts/build_sidecar.py) that detects the host's Rust target triple via `rustc -vV`, copies the binary to `desktop/src-tauri/binaries/wayfinder-daemon-<TARGET_TRIPLE>`, and verifies functionality via an automated live HTTP smoke test on port `8769`.
+* **Rationale:** Yields a completely standalone, zero-terminal, zero-Python-dependency binary (140MB self-contained) ready for instant Tauri bundle compilation across Linux and Windows.
+
 ---
 
 ## 3. Current Project State & Verification Matrix

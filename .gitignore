@@ -38,3 +38,7 @@ Thumbs.db
 # Node / Tauri (for Phase 4)
 node_modules/
 desktop/src-tauri/target/
+
+# Tauri sidecar compiled binaries
+desktop/src-tauri/binaries/*
+!desktop/src-tauri/binaries/.gitkeep

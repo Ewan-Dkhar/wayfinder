@@ -476,7 +476,10 @@ def main() -> None:
     print(f"📡 Interactive Docs: http://{args.host}:{args.port}/docs")
     print("=" * 70 + "\n")
 
-    uvicorn.run("core.server:app", host=args.host, port=args.port, reload=args.reload)
+    if args.reload:
+        uvicorn.run("core.server:app", host=args.host, port=args.port, reload=True)
+    else:
+        uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
