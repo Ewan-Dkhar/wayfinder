@@ -97,7 +97,8 @@ html, body {
 .hud-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
+  flex-shrink: 0;
 }
 
 .pill {
@@ -169,7 +170,7 @@ select.pill-model {
   background-position: right 6px center;
   background-size: 8px;
   padding-right: 18px;
-  max-width: 130px;
+  max-width: 110px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -238,6 +239,34 @@ select.pill-model option {
   border-radius: 4px;
   font-family: inherit;
   color: var(--text-secondary);
+}
+
+.btn-quit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #e2e8f0;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 2px;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.btn-quit:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #fca5a5;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+}
+
+.btn-quit:active {
+  transform: scale(0.92);
 }
 
 /* Search Bar Section */

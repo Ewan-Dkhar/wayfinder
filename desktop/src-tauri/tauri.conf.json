@@ -15,7 +15,7 @@
       {
         "label": "main",
         "title": "Wayfinder",
-        "width": 640,
+        "width": 680,
         "height": 480,
         "resizable": false,
         "fullscreen": false,

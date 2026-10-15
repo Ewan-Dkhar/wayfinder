@@ -3,6 +3,7 @@
  * Pure Vanilla DOM State Controller & High-Speed API Bridge
  */
 
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -99,6 +100,7 @@ let queryInput: HTMLInputElement;
 let searchBtn: HTMLButtonElement;
 let gameSelect: HTMLSelectElement;
 let modelSelect: HTMLSelectElement;
+let btnQuitApp: HTMLButtonElement;
 let daemonStatus: HTMLElement;
 let daemonLabel: HTMLElement;
 
@@ -490,6 +492,19 @@ async function hideHUDWindow(): Promise<void> {
   }
 }
 
+async function quitApplication(): Promise<void> {
+  try {
+    await invoke("exit_app");
+  } catch {
+    try {
+      const appWindow = getCurrentWindow();
+      await appWindow.close();
+    } catch (err) {
+      console.debug("Could not exit app via Tauri window API:", err);
+    }
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Initialization & Event Listeners
 // -----------------------------------------------------------------------------
@@ -529,6 +544,12 @@ window.addEventListener("DOMContentLoaded", () => {
   modelSelect = document.getElementById("model-select") as HTMLSelectElement;
   modelSelect.addEventListener("change", () => {
     switchActiveModel(modelSelect.value);
+  });
+
+  // Bind Quit Application Button
+  btnQuitApp = document.getElementById("btn-quit-app") as HTMLButtonElement;
+  btnQuitApp?.addEventListener("click", () => {
+    quitApplication();
   });
 
   // Bind Ingestion Elements
