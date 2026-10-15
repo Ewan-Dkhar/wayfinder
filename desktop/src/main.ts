@@ -75,6 +75,18 @@ interface GamesResponse {
   games: GameSummary[];
 }
 
+interface ModelsResponse {
+  active_model: string;
+  available_models: string[];
+  ollama_connected: boolean;
+}
+
+interface SetModelResponse {
+  success: boolean;
+  active_model: string;
+  message: string;
+}
+
 const DAEMON_API_URL = "http://127.0.0.1:8765";
 
 // -----------------------------------------------------------------------------
@@ -86,6 +98,7 @@ let activeGameId: string = "sekiro";
 let queryInput: HTMLInputElement;
 let searchBtn: HTMLButtonElement;
 let gameSelect: HTMLSelectElement;
+let modelSelect: HTMLSelectElement;
 let daemonStatus: HTMLElement;
 let daemonLabel: HTMLElement;
 
@@ -196,6 +209,49 @@ async function fetchGamesCatalog(selectGameId?: string): Promise<void> {
     ingestGame.value = activeGameId;
   } catch (err) {
     console.debug("Could not fetch games catalog:", err);
+  }
+}
+
+async function fetchModelsCatalog(): Promise<void> {
+  try {
+    const res = await fetch(`${DAEMON_API_URL}/models`, { method: "GET" });
+    if (!res.ok) return;
+    const data: ModelsResponse = await res.json();
+    if (!data.available_models || data.available_models.length === 0) return;
+
+    modelSelect.innerHTML = "";
+    data.available_models.forEach((name) => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name.replace(/^library\//, "");
+      modelSelect.appendChild(opt);
+    });
+
+    modelSelect.value = data.active_model;
+    if (!data.ollama_connected) {
+      modelSelect.title = `Ollama offline - deterministic fallback active (${data.active_model})`;
+    } else {
+      modelSelect.title = `Active local SLM: ${data.active_model}`;
+    }
+  } catch (err) {
+    console.debug("Could not fetch models catalog:", err);
+  }
+}
+
+async function switchActiveModel(newModel: string): Promise<void> {
+  try {
+    const res = await fetch(`${DAEMON_API_URL}/settings/model`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: newModel }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data: SetModelResponse = await res.json();
+    console.info("Active model switched to:", data.active_model);
+    modelSelect.title = `Active local SLM: ${data.active_model}`;
+    await checkDaemonHealth();
+  } catch (err) {
+    console.error("Failed to switch model:", err);
   }
 }
 
@@ -469,6 +525,12 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Bind Model Selector
+  modelSelect = document.getElementById("model-select") as HTMLSelectElement;
+  modelSelect.addEventListener("change", () => {
+    switchActiveModel(modelSelect.value);
+  });
+
   // Bind Ingestion Elements
   ingestModal = document.getElementById("ingest-modal") as HTMLElement;
   btnOpenIngest = document.getElementById("btn-open-ingest") as HTMLButtonElement;
@@ -564,9 +626,10 @@ window.addEventListener("DOMContentLoaded", () => {
     console.debug("Tauri event listener not active (browser dev environment):", err);
   }
 
-  // Initial daemon health probe, game catalog load, and interval check
+  // Initial daemon health probe, catalogs load, and interval check
   checkDaemonHealth();
   fetchGamesCatalog();
+  fetchModelsCatalog();
   setInterval(checkDaemonHealth, 5000);
 });
 

@@ -105,6 +105,28 @@ class GamesResponse(BaseModel):
     games: List[GameSummary]
 
 
+class ModelsResponse(BaseModel):
+    """List of all discovered models in local Ollama and the current active model."""
+
+    active_model: str
+    available_models: List[str]
+    ollama_connected: bool
+
+
+class SetModelRequest(BaseModel):
+    """Payload to update the active local SLM model."""
+
+    model: str = Field(..., min_length=1, description="Model identifier to set as active (e.g. 'qwen2.5:1.5b')")
+
+
+class SetModelResponse(BaseModel):
+    """Confirmation payload after switching active model."""
+
+    success: bool
+    active_model: str
+    message: str
+
+
 class IngestRequest(BaseModel):
     """Payload to ingest combat guides into the local knowledge base."""
 
@@ -194,7 +216,7 @@ def create_app(db_path: Path | str = DEFAULT_DB_PATH) -> FastAPI:
             "name": "Wayfinder Daemon",
             "version": "0.1.0",
             "status": "online",
-            "endpoints": ["/health", "/games", "/query"],
+            "endpoints": ["/health", "/games", "/models", "/settings/model", "/query", "/ingest"],
         }
 
     @app.get("/health", response_model=HealthResponse, tags=["Diagnostics"])
@@ -225,6 +247,35 @@ def create_app(db_path: Path | str = DEFAULT_DB_PATH) -> FastAPI:
             model=synthesizer.llm_client.model,
             indexed_chunks=indexed_count,
         )
+
+    @app.get("/models", response_model=ModelsResponse, tags=["Settings"])
+    def list_models(request: Request) -> ModelsResponse:
+        """Discovers all models installed in local Ollama and returns the active model."""
+        synthesizer: TacticalSynthesizer = request.app.state.synthesizer
+        available = synthesizer.llm_client.get_installed_models()
+        is_connected = synthesizer.llm_client.check_health()
+        return ModelsResponse(
+            active_model=synthesizer.llm_client.model,
+            available_models=available,
+            ollama_connected=is_connected,
+        )
+
+    @app.post("/settings/model", response_model=SetModelResponse, tags=["Settings"])
+    def set_model(payload: SetModelRequest, request: Request) -> SetModelResponse:
+        """Hot-swaps the active SLM model in memory and persists to user config."""
+        synthesizer: TacticalSynthesizer = request.app.state.synthesizer
+        try:
+            updated = synthesizer.llm_client.set_model(payload.model, persist=True)
+            return SetModelResponse(
+                success=True,
+                active_model=updated,
+                message=f"Active model successfully switched to '{updated}'.",
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to update active model: {e}",
+            )
 
     @app.get("/games", response_model=GamesResponse, tags=["Retrieval"])
     def list_games(request: Request) -> GamesResponse:

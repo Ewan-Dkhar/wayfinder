@@ -17,8 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-DEFAULT_OLLAMA_URL = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-DEFAULT_MODEL = os.getenv("WAYFINDER_MODEL", "llama3.2:3b")
+from core.config import DEFAULT_MODEL, DEFAULT_OLLAMA_URL, get_configured_model, save_config
 
 
 class LLMClientError(Exception):
@@ -38,12 +37,12 @@ class LocalLLMClient:
 
     def __init__(
         self,
-        base_url: str = DEFAULT_OLLAMA_URL,
-        model: str = DEFAULT_MODEL,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
         timeout_seconds: float = 4.0,
     ):
-        self.base_url = base_url.rstrip("/")
-        self.model = model
+        self.base_url = (base_url or DEFAULT_OLLAMA_URL).rstrip("/")
+        self.model = (model or get_configured_model()).strip()
         self.timeout_seconds = timeout_seconds
 
     def check_health(self) -> bool:
@@ -54,6 +53,43 @@ class LocalLLMClient:
                 return res.status_code == 200
         except Exception:
             return False
+
+    def get_installed_models(self) -> list[str]:
+        """Discovers all models currently installed in the local Ollama instance."""
+        discovered: list[str] = []
+        try:
+            with httpx.Client(timeout=1.0) as client:
+                res = client.get(f"{self.base_url}/api/tags")
+                if res.status_code == 200:
+                    data = res.json()
+                    discovered = [
+                        m.get("name")
+                        for m in data.get("models", [])
+                        if isinstance(m, dict) and m.get("name")
+                    ]
+        except Exception:
+            pass
+
+        # Ensure active model is always selectable even if Ollama is unreachable
+        if self.model and self.model not in discovered:
+            discovered.insert(0, self.model)
+        elif not discovered and self.model:
+            discovered = [self.model]
+
+        return discovered
+
+    def set_model(self, model_name: str, persist: bool = True) -> str:
+        """Updates the active model identifier in memory and persists to user config."""
+        clean_name = model_name.strip()
+        if not clean_name:
+            raise ValueError("Model name cannot be empty")
+        self.model = clean_name
+        if persist:
+            try:
+                save_config({"model": self.model})
+            except Exception:
+                pass
+        return self.model
 
     def generate_json(self, system_prompt: str, user_prompt: str) -> str:
         """Generates structured JSON using Ollama's grammar-constrained JSON mode.

@@ -169,3 +169,42 @@ def test_ingest_unsupported_url(client: TestClient):
     res = client.post("/ingest", json=payload)
     assert res.status_code == 400
 
+
+def test_models_endpoint(client: TestClient):
+    """Verifies discovery of installed local models."""
+    res = client.get("/models")
+    assert res.status_code == 200
+    data = res.json()
+    assert "active_model" in data
+    assert "available_models" in data
+    assert isinstance(data["available_models"], list)
+    assert len(data["available_models"]) >= 1
+    assert data["active_model"] in data["available_models"]
+
+
+def test_set_model_endpoint(client: TestClient):
+    """Verifies hot-swapping the active model and checking reflection in health probe."""
+    test_model = "qwen2.5:1.5b"
+    res = client.post("/settings/model", json={"model": test_model})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert data["active_model"] == test_model
+
+    # Check health probe reflects the updated model
+    h_res = client.get("/health")
+    assert h_res.status_code == 200
+    assert h_res.json()["model"] == test_model
+
+    # Check /models reflects the updated model
+    m_res = client.get("/models")
+    assert m_res.status_code == 200
+    assert m_res.json()["active_model"] == test_model
+
+
+def test_set_model_empty_rejected(client: TestClient):
+    """Verifies 422 validation failure when empty model string is provided."""
+    res = client.post("/settings/model", json={"model": ""})
+    assert res.status_code == 422
+
+

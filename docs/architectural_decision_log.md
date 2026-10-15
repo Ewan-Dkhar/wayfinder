@@ -50,7 +50,7 @@ Rather than starting with a flashy UI overlay, Wayfinder is engineered from the 
 ### ADR-004: FTS5 Stop-Word Stripping and OR Disjunction
 * **Date:** Phase 2
 * **Context:** SQLite FTS5 interprets space-separated words as an implicit `AND`. When players ask natural language questions (*"How to counter Genichiro lightning"*), queries failed because transcripts do not contain conversational filler like *"How to"*.
-* **Decision:** Strip conversational stop words in [`sanitize_query`](file:///home/ewan/Projects/wayfinder/core/db/fts_engine.py#L67) and join content tokens with `OR`.
+* **Decision:** Strip conversational stop words in [`sanitize_query`](../core/db/fts_engine.py#L67) and join content tokens with `OR`.
 * **Rationale:** BM25 naturally sums IDF scores of all matched terms. Documents with high term overlap rank highest, but searches never fail due to missing conversational filler.
 
 ---
@@ -74,7 +74,7 @@ Rather than starting with a flashy UI overlay, Wayfinder is engineered from the 
 ### ADR-007: Pydantic v2 Schema Enforcement for TacticalCard
 * **Date:** Phase 2
 * **Context:** Frontend HUD overlays require strict, guaranteed data shapes to render without `undefined` runtime exceptions.
-* **Decision:** Define [`TacticalCard`](file:///home/ewan/Projects/wayfinder/core/llm/schemas.py#L35) and [`TacticalCue`](file:///home/ewan/Projects/wayfinder/core/llm/schemas.py#L14) using Pydantic v2.
+* **Decision:** Define [`TacticalCard`](../core/llm/schemas.py#L35) and [`TacticalCue`](../core/llm/schemas.py#L14) using Pydantic v2.
 * **Rationale:** Enforces the universal combat loop (`tell` $\rightarrow$ `action` $\rightarrow$ `outcome`), caps summaries at 25 words for glanceability, and validates in under 0.03ms via Rust `pydantic-core`.
 
 ---
@@ -98,7 +98,7 @@ Rather than starting with a flashy UI overlay, Wayfinder is engineered from the 
 ### ADR-010: Overlapping Sliding Window Chunking (35s Window, 15s Stride)
 * **Date:** Phase 3
 * **Context:** Subtitle cues arrive in 2–4 second fragments. Indexing individual cues splits enemy telegraphs from the corresponding counter action.
-* **Decision:** Implement [`chunk_cues_sliding_window`](file:///home/ewan/Projects/wayfinder/core/ingestion/chunker.py#L55) with a 35s window and 15s stride, coupled with token history de-duplication to eliminate Google ASR rolling repetitions.
+* **Decision:** Implement [`chunk_cues_sliding_window`](../core/ingestion/chunker.py#L55) with a 35s window and 15s stride, coupled with token history de-duplication to eliminate Google ASR rolling repetitions.
 * **Rationale:** Preserves complete combat action loops across cutoffs while eliminating speech stutters.
 
 ---
@@ -106,7 +106,7 @@ Rather than starting with a flashy UI overlay, Wayfinder is engineered from the 
 ### ADR-011: Strict CPU INT8 Whisper Fallback via faster-whisper
 * **Date:** Phase 3
 * **Context:** Videos with zero subtitles require audio transcription, but PyTorch Whisper consumes significant GPU VRAM needed by the running game.
-* **Decision:** Implement [`WhisperTranscriber`](file:///home/ewan/Projects/wayfinder/core/ingestion/transcriber.py#L25) using `faster-whisper` (CTranslate2) with `device="cpu"` and `compute_type="int8"`.
+* **Decision:** Implement [`WhisperTranscriber`](../core/ingestion/transcriber.py#L25) using `faster-whisper` (CTranslate2) with `device="cpu"` and `compute_type="int8"`.
 * **Rationale:** Keeps **100% of GPU VRAM free** for the active game while transcribing on 4 CPU threads.
 
 ---
@@ -120,7 +120,7 @@ Rather than starting with a flashy UI overlay, Wayfinder is engineered from the 
 ### ADR-013: FastAPI Micro-Daemon with Worker Threadpools & Multi-Threaded SQLite
 * **Date:** Phase 4
 * **Context:** The Tauri overlay requires sub-millisecond status checks, catalog lookups, and combat query responses without freezing when the local SLM is performing token inference or when accessed across multiple threads.
-* **Decision:** Implement a micro FastAPI server ([`core/server.py`](file:///home/ewan/Projects/wayfinder/core/server.py)) using threadpool offloading (`def execute_query`) paired with `sqlite3.connect(..., check_same_thread=False)`. Wrap all query results in an envelope model (`found`, `card`, `telemetry`).
+* **Decision:** Implement a micro FastAPI server ([`core/server.py`](../core/server.py)) using threadpool offloading (`def execute_query`) paired with `sqlite3.connect(..., check_same_thread=False)`. Wrap all query results in an envelope model (`found`, `card`, `telemetry`).
 * **Rationale:** Keeps the asyncio event loop responsive (<1ms `/health` responses) even while local SLM token generation is in flight. Enables safe multi-threaded SQLite reads across AnyIO worker threads while WAL mode eliminates read locks.
 
 ### ADR-014: Tauri v2 Frameless Transparent HUD with Vanilla TypeScript
@@ -144,8 +144,18 @@ Rather than starting with a flashy UI overlay, Wayfinder is engineered from the 
 ### ADR-017: Unified On-Demand Ingestion API (POST /ingest) & HUD Ingestion Drawer
 * **Date:** Phase 4 Extension
 * **Context:** Players need to ingest new combat guides on the fly directly from the HUD overlay without restarting servers or using CLI terminal commands.
-* **Decision:** Build a unified `POST /ingest` endpoint in [`core/server.py`](file:///home/ewan/Projects/wayfinder/core/server.py) supporting polymorphic ingestion (YouTube video URLs via `yt-dlp`, Steam Community Guide URLs, or direct in-memory Markdown text). The frontend reads dropped/selected `.md` files in memory using `file.text()` to eliminate temporary disk I/O. Encounter identifiers are automatically canonicalized via `slugify()` to prevent case-sensitive B-Tree fragmentation in SQLite.
+* **Decision:** Build a unified `POST /ingest` endpoint in [`core/server.py`](../core/server.py) supporting polymorphic ingestion (YouTube video URLs via `yt-dlp`, Steam Community Guide URLs, or direct in-memory Markdown text). The frontend reads dropped/selected `.md` files in memory using `file.text()` to eliminate temporary disk I/O. Encounter identifiers are automatically canonicalized via `slugify()` to prevent case-sensitive B-Tree fragmentation in SQLite.
 * **Rationale:** Zero disk temporary writes, zero extra MIME dependencies (`python-multipart` avoided), and immediate index synchronization with FTS5 triggers for instant sub-millisecond searchability.
+
+### ADR-018: Dynamic Local SLM Discovery, Hot-Swapping & Config Persistence
+* **Date:** Phase 4 Extension
+* **Context:** When packaging the Python daemon into a frozen binary with PyInstaller, the app must not permanently hardcode a single SLM model or require users to edit environment variables or terminal launch flags to change models. Players with varying hardware (e.g. Steam Deck with 4GB VRAM vs RTX 4090 desktop) need to select appropriate models (e.g. `qwen2.5:1.5b` vs `llama3.2:3b` vs `deepseek-r1:1.5b`) directly in the HUD interface.
+* **Decision:** 
+  1. Add model discovery in [`LocalLLMClient.get_installed_models()`](../core/llm/client.py) via Ollama's `GET /api/tags`, automatically detecting all locally downloaded models on the user's system.
+  2. Implement `GET /models` and `POST /settings/model` in [`core/server.py`](../core/server.py) to allow live hot-swapping of `synthesizer.llm_client.model` in memory without restarting the micro-daemon or webview.
+  3. Create [`core/config.py`](../core/config.py) targeting OS-standard configuration paths (`~/.config/wayfinder/config.json` on Linux, `%APPDATA%\wayfinder\config.json` on Windows) to persist model selection across boots.
+  4. Integrate a styled model picker dropdown (`#model-select.pill-model`) in the HUD header with instant reactivity.
+* **Rationale:** Completely decouples the frozen application binary from model weights, keeps the distribution package lightweight (<50MB), allows players to adapt inference to their GPU VRAM tier with zero terminal input, and provides future-proofing as new SLMs are published.
 
 ---
 
@@ -189,26 +199,26 @@ Now that the backend retrieval, synthesis, and ingestion engines are rock solid,
 ```
 
 #### Detailed Steps for Phase 4:
-1. **Lightweight Daemon Server ([`core/server.py`](file:///home/ewan/Projects/wayfinder/core/server.py)) — [COMPLETED]:**
+1. **Lightweight Daemon Server ([`core/server.py`](../core/server.py)) — [COMPLETED]:**
    * Built FastAPI / Uvicorn micro-daemon with `check_same_thread=False` and threadpool routing.
    * `POST /query`: takes `{ "game_id": "sekiro", "query": "..." }`, returns `TacticalCard` envelope with sub-ms FTS and 20ms fallback.
    * `GET /games`: lists indexed games, encounters, and chunk counts.
    * `GET /health`: checks daemon status, chunk counts, and local LLM availability.
-   * Verified with 100% passing tests in [`tests/test_server.py`](file:///home/ewan/Projects/wayfinder/tests/test_server.py).
+   * Verified with 100% passing tests in [`tests/test_server.py`](../tests/test_server.py).
 
-2. **Scaffold Tauri v2 Frameless Window ([`desktop/`](file:///home/ewan/Projects/wayfinder/desktop)) — [COMPLETED]:**
+2. **Scaffold Tauri v2 Frameless Window ([`desktop/`](../desktop)) — [COMPLETED]:**
    * Configured `desktop/src-tauri/tauri.conf.json` with `transparent: true`, `decorations: false`, `alwaysOnTop: true`, and `shadow: false`.
    * Built zero-runtime Vanilla TypeScript + Vite frontend with glassmorphic HUD styling.
    * Implemented direct DOM mutation rendering for the 3-bullet combat loop (`tell` $\rightarrow$ `action` $\rightarrow$ `outcome`).
    * Verified with `npm run build` (46ms compile) and `cargo check` (passes cleanly).
 
-3. **Global Shortcuts & Input Handling ([`desktop/src-tauri/src/lib.rs`](file:///home/ewan/Projects/wayfinder/desktop/src-tauri/src/lib.rs)) — [COMPLETED]:**
+3. **Global Shortcuts & Input Handling ([`desktop/src-tauri/src/lib.rs`](../desktop/src-tauri/src/lib.rs)) — [COMPLETED]:**
    * Configured `tauri-plugin-global-shortcut` with native `Alt + G` toggle in Rust core.
    * Set window initial state to silent background boot (`visible: false`).
    * Implemented focus loop: `Alt + G` shows, unminimizes, focuses window, and emits `focus-input`.
    * Webview auto-focuses and selects search input; `Escape` key instantly hides the HUD and returns focus to the game.
 
-4. **Startup Desktop Notification ([`desktop/src-tauri/src/lib.rs`](file:///home/ewan/Projects/wayfinder/desktop/src-tauri/src/lib.rs)) — [COMPLETED]:**
+4. **Startup Desktop Notification ([`desktop/src-tauri/src/lib.rs`](../desktop/src-tauri/src/lib.rs)) — [COMPLETED]:**
    * Configured `tauri-plugin-notification` to emit native D-Bus / WinRT desktop toast on application boot:
      *"Wayfinder Active (Alt+G): HUD ready in background. Set game to Borderless Windowed for overlay display."*
 
