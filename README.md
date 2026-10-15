@@ -157,53 +157,53 @@ Installer (.deb / .AppImage / .exe / .msi)
 
 ### Build Steps:
 
-#### Step 1: Compile the Python Daemon to a Standalone Binary
+#### Prerequisites
+* **Rust:** Stable toolchain (`rustup default stable`)
+* **Node.js:** v18+ & npm
+* **Python:** 3.12+ managed via `uv`
+* **OS Build Libraries (Linux only):**
+  * *Arch Linux:* `sudo pacman -S webkit2gtk-4.1 libappindicator-gtk3 base-devel`
+  * *Ubuntu/Debian:* `sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`
+
+---
+
+#### Step 1: Compile & Stage the Python Sidecar Daemon
+Wayfinder includes an automated build script ([`scripts/build_sidecar.py`](scripts/build_sidecar.py)) that detects your host's Rust target triple, runs PyInstaller with all required hidden imports via [`wayfinder-daemon.spec`](wayfinder-daemon.spec), stages the binary into `desktop/src-tauri/binaries/`, and performs an automated live health probe:
+
 ```bash
-# Install PyInstaller
-uv pip install pyinstaller
-
-# Build self-contained daemon executable
-uv run pyinstaller --onefile \
-  --name wayfinder-daemon \
-  --add-data "wayfinder.db:." \
-  core/server.py
+# In the repository root
+uv run python scripts/build_sidecar.py
 ```
 
-#### Step 2: Configure Tauri Sidecar
-Add the target triple name to `desktop/src-tauri/binaries/`:
-* Linux: `desktop/src-tauri/binaries/wayfinder-daemon-x86_64-unknown-linux-gnu`
-* Windows: `desktop/src-tauri/binaries/wayfinder-daemon-x86_64-pc-windows-msvc.exe`
-
-Register the binary in [`desktop/src-tauri/tauri.conf.json`](desktop/src-tauri/tauri.conf.json):
-```json
-{
-  "bundle": {
-    "externalBin": [
-      "binaries/wayfinder-daemon"
-    ]
-  }
-}
+Output:
+```
+📦 [1/4] Running PyInstaller to freeze Python micro-daemon...
+✅ [2/4] PyInstaller binary compiled successfully: dist/wayfinder-daemon (140.3 MB)
+🚚 [3/4] Staging sidecar binary for Tauri v2...
+✅ Staged sidecar binary: desktop/src-tauri/binaries/wayfinder-daemon-<target-triple>
+🔍 [4/4] Performing live smoke test on compiled sidecar binary...
+🎉 [SUCCESS] Compiled binary passed all health probes!
 ```
 
-#### Step 3: Lifecycle Management in Rust (`src/lib.rs`)
-In Tauri's `setup()` hook, spawn the sidecar:
-```rust
-let (mut _rx, child) = app.shell().sidecar("wayfinder-daemon")
-    .expect("failed to setup sidecar")
-    .spawn()
-    .expect("failed to spawn daemon");
-```
+> [!NOTE]
+> Compiled sidecar binaries in `desktop/src-tauri/binaries/` are excluded from Git via `.gitignore` to keep repositories under GitHub's 100MB file limit.
 
-#### Step 4: Build the Final Distribution Bundle
+---
+
+#### Step 2: Build the Final Desktop Application Bundle
+Once the sidecar is staged, compile the native installer with Tauri:
+
 ```bash
 cd desktop
+npm install
 npm run tauri build
 ```
-This generates:
-* **Linux:** `.deb` package and standalone `.AppImage` in `desktop/src-tauri/target/release/bundle/`
+
+This generates production-ready installers with the daemon embedded inside:
+* **Linux:** Standalone `.AppImage` and `.deb` in `desktop/src-tauri/target/release/bundle/`
 * **Windows:** `.msi` and `.exe` installers in `desktop/src-tauri/target/release/bundle/msi/`
 
-The end user simply downloads and runs the installer—no Python, no Node.js, and no terminal required!
+The end user simply double-clicks the installer—no Python, no Node.js, and no terminal required!
 
 ---
 
