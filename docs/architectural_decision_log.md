@@ -157,6 +157,15 @@ Rather than starting with a flashy UI overlay, Wayfinder is engineered from the 
   4. Integrate a styled model picker dropdown (`#model-select.pill-model`) in the HUD header with instant reactivity.
 * **Rationale:** Completely decouples the frozen application binary from model weights, keeps the distribution package lightweight (<50MB), allows players to adapt inference to their GPU VRAM tier with zero terminal input, and provides future-proofing as new SLMs are published.
 
+### ADR-019: Persistent User State Separation & Bundled Seed Auto-Seeding
+* **Date:** Phase 4 Extension
+* **Context:** In packaged standalone distributions (`.AppImage`, `.deb`, Windows `.msi`, PyInstaller `--onefile`), application code runs from read-only or ephemeral locations (`sys._MEIPASS` or `/usr/bin/`). Hardcoding `DEFAULT_DB_PATH` relative to `__file__` causes fatal `sqlite3.OperationalError: attempt to write a readonly database` crashes in WAL mode and wipes all ingested user data upon app termination.
+* **Decision:** Implement `get_default_db_path()` and `get_seed_db_path()` in [`core/db/database.py`](../core/db/database.py):
+  1. Target standard OS-level writable application data storage (`~/.local/share/wayfinder/` on Linux, `%LOCALAPPDATA%\wayfinder\` on Windows).
+  2. In compiled binary mode (`is_frozen_binary()`), if `wayfinder.db` does not exist in user storage, automatically copy the bundled seed database on first boot (`shutil.copy2`), or run `init_db()` if no seed is available.
+  3. In development source mode, seamlessly use the local workspace database while supporting `WAYFINDER_DB_PATH` overrides for unit tests.
+* **Rationale:** Completely insulates the application from read-only mount crashes, ensures 100% persistence for all user-ingested combat guides across application updates, and preserves seamless zero-configuration development in the git workspace.
+
 ---
 
 ## 3. Current Project State & Verification Matrix

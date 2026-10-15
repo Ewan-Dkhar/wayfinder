@@ -208,3 +208,36 @@ def test_set_model_empty_rejected(client: TestClient):
     assert res.status_code == 422
 
 
+def test_default_db_path_resolution(monkeypatch):
+    """Verifies WAYFINDER_DB_PATH environment override."""
+    from core.db.database import get_default_db_path
+
+    custom_path = "/tmp/custom_test_wayfinder.db"
+    monkeypatch.setenv("WAYFINDER_DB_PATH", custom_path)
+    resolved = get_default_db_path()
+    assert str(resolved) == custom_path
+
+
+def test_auto_seeding_in_frozen_mode(tmp_path, monkeypatch):
+    """Verifies that in a frozen binary, the bundled seed DB is copied to user app data dir."""
+    import sys
+    from core.db import database
+
+    fake_app_data = tmp_path / "user_data"
+    monkeypatch.setattr(database, "APP_DATA_DIR", fake_app_data)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delenv("WAYFINDER_DB_PATH", raising=False)
+
+    # First call should create user dir and copy the seed DB
+    target_db = database.get_default_db_path()
+    assert target_db == fake_app_data / "wayfinder.db"
+    assert target_db.exists()
+    assert target_db.stat().st_size > 0
+
+    # Verify database connection and schema work
+    with database.get_connection(target_db) as conn:
+        cursor = conn.execute("SELECT count(*) as total FROM guide_chunks")
+        assert cursor.fetchone()["total"] > 0
+
+
+
