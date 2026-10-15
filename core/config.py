@@ -37,6 +37,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 def get_config_path() -> Path:
     """Returns the writable config file path, falling back to local workspace if needed."""
+    env_override = os.getenv("WAYFINDER_CONFIG_PATH")
+    if env_override:
+        p = Path(env_override)
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            return p
+        except Exception:
+            pass
+
     try:
         APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
         return CONFIG_FILE_PATH

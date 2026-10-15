@@ -8,6 +8,8 @@ Validates:
 - Input validation and error cases
 """
 
+import os
+from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
@@ -16,11 +18,21 @@ from core.server import create_app
 
 
 @pytest.fixture(scope="module")
-def client():
-    """Module-level test client ensuring lifespan hooks execute."""
+def client(tmp_path_factory):
+    """Module-level test client ensuring lifespan hooks execute with isolated test config."""
+    test_config_dir = tmp_path_factory.mktemp("wayfinder_test_config")
+    test_config_file = test_config_dir / "config.json"
+    old_env = os.environ.get("WAYFINDER_CONFIG_PATH")
+    os.environ["WAYFINDER_CONFIG_PATH"] = str(test_config_file)
+
     app = create_app(db_path=DEFAULT_DB_PATH)
     with TestClient(app) as test_client:
         yield test_client
+
+    if old_env is not None:
+        os.environ["WAYFINDER_CONFIG_PATH"] = old_env
+    else:
+        os.environ.pop("WAYFINDER_CONFIG_PATH", None)
 
 
 def test_root_endpoint(client: TestClient):
@@ -240,4 +252,35 @@ def test_auto_seeding_in_frozen_mode(tmp_path, monkeypatch):
         assert cursor.fetchone()["total"] > 0
 
 
+def test_wayfinder_config_path_override(tmp_path, monkeypatch):
+    """Verifies WAYFINDER_CONFIG_PATH isolates settings persistence."""
+    from core.config import get_config_path, load_config, save_config
 
+    custom_cfg = tmp_path / "custom_config.json"
+    monkeypatch.setenv("WAYFINDER_CONFIG_PATH", str(custom_cfg))
+
+    assert get_config_path() == custom_cfg
+    save_config({"model": "test-model:latest"})
+
+    assert custom_cfg.exists()
+    loaded = load_config()
+    assert loaded["model"] == "test-model:latest"
+
+
+def test_llm_model_tag_matching():
+    """Verifies that closest model tag is matched when tag suffix is missing."""
+    from core.llm.client import LocalLLMClient
+
+    installed = ["llama3.2:3b", "qwen2.5-coder:3b"]
+
+    # Exact match
+    assert LocalLLMClient.find_best_matching_model("llama3.2:3b", installed) == "llama3.2:3b"
+
+    # Prefix match without tag
+    assert LocalLLMClient.find_best_matching_model("llama3.2", installed) == "llama3.2:3b"
+
+    # Tag mismatch (e.g. :latest -> :3b)
+    assert LocalLLMClient.find_best_matching_model("llama3.2:latest", installed) == "llama3.2:3b"
+
+    # Non-existent model returns None
+    assert LocalLLMClient.find_best_matching_model("nonexistent:1b", installed) is None

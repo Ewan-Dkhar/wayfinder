@@ -54,21 +54,51 @@ class LocalLLMClient:
         except Exception:
             return False
 
-    def get_installed_models(self) -> list[str]:
-        """Discovers all models currently installed in the local Ollama instance."""
-        discovered: list[str] = []
+    def get_raw_installed_models(self) -> list[str]:
+        """Queries local Ollama /api/tags for actually installed model tags."""
         try:
             with httpx.Client(timeout=1.0) as client:
                 res = client.get(f"{self.base_url}/api/tags")
                 if res.status_code == 200:
                     data = res.json()
-                    discovered = [
+                    return [
                         m.get("name")
                         for m in data.get("models", [])
                         if isinstance(m, dict) and m.get("name")
                     ]
         except Exception:
             pass
+        return []
+
+    @staticmethod
+    def find_best_matching_model(model_name: str, installed_models: list[str]) -> Optional[str]:
+        """Finds closest matching installed model handling tag differences (e.g. :3b vs :latest)."""
+        if not model_name or not installed_models:
+            return None
+        if model_name in installed_models:
+            return model_name
+        # Prefix match (e.g. 'llama3.2' -> 'llama3.2:3b')
+        prefix = f"{model_name}:"
+        for m in installed_models:
+            if m.startswith(prefix):
+                return m
+        # Base name match (e.g. 'llama3.2:latest' -> 'llama3.2:3b')
+        base = model_name.split(":")[0]
+        for m in installed_models:
+            if m.split(":")[0] == base:
+                return m
+        return None
+
+    def get_installed_models(self) -> list[str]:
+        """Discovers all models currently installed in the local Ollama instance."""
+        discovered = self.get_raw_installed_models()
+
+        # If Ollama is running and has models, but active model has tag mismatch (e.g. llama3.2 vs llama3.2:3b),
+        # auto-resolve it to the matching installed tag
+        if discovered and self.model not in discovered:
+            matched = self.find_best_matching_model(self.model, discovered)
+            if matched:
+                self.model = matched
 
         # Ensure active model is always selectable even if Ollama is unreachable
         if self.model and self.model not in discovered:
@@ -112,9 +142,49 @@ class LocalLLMClient:
         try:
             with httpx.Client(timeout=self.timeout_seconds) as client:
                 resp = client.post(f"{self.base_url}/api/generate", json=payload)
+
+                # Defensive handling for Ollama 404 (model not found)
+                if resp.status_code == 404:
+                    err_msg = ""
+                    try:
+                        err_msg = resp.json().get("error", "")
+                    except Exception:
+                        err_msg = resp.text
+
+                    # Try auto-recovery: check installed models in Ollama
+                    installed = self.get_raw_installed_models()
+                    matched = self.find_best_matching_model(self.model, installed)
+                    if not matched and DEFAULT_MODEL in installed:
+                        matched = DEFAULT_MODEL
+                    elif not matched and installed:
+                        matched = installed[0]
+
+                    if matched and matched != self.model:
+                        # Auto-healed: retry with installed model
+                        self.model = matched
+                        payload["model"] = matched
+                        retry_resp = client.post(f"{self.base_url}/api/generate", json=payload)
+                        retry_resp.raise_for_status()
+                        return retry_resp.json().get("response", "").strip()
+
+                    raise LLMClientError(
+                        f"Ollama returned 404 Not Found for model '{self.model}'. "
+                        f"Reason: {err_msg or 'Model not installed'}. "
+                        f"Run 'ollama pull {self.model}' in your terminal or choose an installed model."
+                    )
+
                 resp.raise_for_status()
                 data = resp.json()
                 return data.get("response", "").strip()
+        except httpx.HTTPStatusError as e:
+            err_msg = ""
+            try:
+                err_msg = e.response.json().get("error", "")
+            except Exception:
+                err_msg = e.response.text
+            raise LLMClientError(
+                f"Ollama HTTP {e.response.status_code} error: {err_msg or e}"
+            ) from e
         except httpx.ConnectError as e:
             raise LLMConnectionError(
                 f"Could not connect to Ollama at {self.base_url}. Ensure 'ollama serve' is running."
@@ -123,5 +193,7 @@ class LocalLLMClient:
             raise LLMTimeoutError(
                 f"LLM inference timed out after {self.timeout_seconds}s (latency budget exceeded)."
             ) from e
+        except LLMClientError:
+            raise
         except Exception as e:
             raise LLMClientError(f"Unexpected LLM generation error: {e}") from e
