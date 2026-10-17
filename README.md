@@ -96,6 +96,9 @@ npm install
 npm run tauri dev
 ```
 
+> [!TIP]
+> **Zero-Friction Dev Setup:** You do **not** need to compile the 140MB PyInstaller sidecar binary for local development! Wayfinder's Cargo build script automatically provisions a lightweight development stub on your first `npm run tauri dev`. The desktop HUD will connect directly to your live FastAPI daemon running on `127.0.0.1:8765`.
+
 ---
 
 ## 🎮 How to Use in Game
@@ -198,6 +201,8 @@ cd desktop
 npm install
 npm run tauri build
 ```
+
+*(Or run `npm run build:all` to compile both the sidecar and Tauri bundle in one command!)*
 
 This generates production-ready installers with the daemon embedded inside:
 * **Linux:** Standalone `.AppImage` and `.deb` in `desktop/src-tauri/target/release/bundle/`
