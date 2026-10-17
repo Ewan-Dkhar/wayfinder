@@ -15,6 +15,7 @@ interface TacticalCue {
   tell: string;
   action: string;
   outcome: string;
+  clip_url?: string;
 }
 
 interface TacticalCard {
@@ -27,6 +28,7 @@ interface TacticalCard {
   source_type?: string;
   source_ref?: string;
   timestamp_display?: string;
+  clip_url?: string;
 }
 
 interface TelemetryInfo {
@@ -361,26 +363,62 @@ function renderTacticalCard(card: TacticalCard, telemetry: TelemetryInfo): void 
 
   cardSummary.textContent = card.summary;
 
-  // Render 3-Bullet Combat Loop
+  // Render 3-Bullet Combat Loop with optional visual micro-clip
   cuesContainer.innerHTML = "";
-  card.tactical_cues.forEach((cue) => {
+  card.tactical_cues.forEach((cue, index) => {
     const cueItem = document.createElement("div");
     cueItem.className = "cue-item";
 
+    // Associate clip: individual cue clip_url, or fallback to top card clip_url for the first cue
+    const clipUrl = cue.clip_url || (index === 0 ? card.clip_url : undefined);
+
+    const clipHtml = clipUrl
+      ? `
+        <div class="cue-clip-box" title="Combat Telegraph Loop (Click to pause/play)">
+          <video class="cue-video" src="${DAEMON_API_URL}${clipUrl}" autoplay loop muted playsinline preload="auto"></video>
+          <span class="clip-pill">▶ LOOP</span>
+        </div>
+      `
+      : "";
+
     cueItem.innerHTML = `
-      <div class="cue-row">
-        <span class="tag tag-tell">TELL</span>
-        <span class="cue-text">${escapeHTML(cue.tell)}</span>
-      </div>
-      <div class="cue-row">
-        <span class="tag tag-action">ACTION</span>
-        <span class="cue-text">${escapeHTML(cue.action)}</span>
-      </div>
-      <div class="cue-row">
-        <span class="tag tag-outcome">OUTCOME</span>
-        <span class="cue-text">${escapeHTML(cue.outcome)}</span>
+      <div class="cue-content-wrap ${clipUrl ? "has-clip" : ""}">
+        <div class="cue-rows">
+          <div class="cue-row">
+            <span class="tag tag-tell">TELL</span>
+            <span class="cue-text">${escapeHTML(cue.tell)}</span>
+          </div>
+          <div class="cue-row">
+            <span class="tag tag-action">ACTION</span>
+            <span class="cue-text">${escapeHTML(cue.action)}</span>
+          </div>
+          <div class="cue-row">
+            <span class="tag tag-outcome">OUTCOME</span>
+            <span class="cue-text">${escapeHTML(cue.outcome)}</span>
+          </div>
+        </div>
+        ${clipHtml}
       </div>
     `;
+
+    // Click on clip to toggle play/pause
+    if (clipUrl) {
+      const videoEl = cueItem.querySelector(".cue-video") as HTMLVideoElement | null;
+      const clipBox = cueItem.querySelector(".cue-clip-box") as HTMLElement | null;
+      if (videoEl && clipBox) {
+        clipBox.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (videoEl.paused) {
+            videoEl.play();
+            clipBox.classList.remove("paused");
+          } else {
+            videoEl.pause();
+            clipBox.classList.add("paused");
+          }
+        });
+      }
+    }
+
     cuesContainer.appendChild(cueItem);
   });
 
