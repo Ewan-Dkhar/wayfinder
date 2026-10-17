@@ -22,11 +22,11 @@
           <button id="btn-open-ingest" class="header-action-btn" title="Index new guide (YouTube, Steam, or File)">
             <span class="action-icon">📥</span> Ingest
           </button>
-          <select id="game-select" class="pill pill-game" title="Switch active game">
-            <option value="sekiro">SEKIRO</option>
+          <select id="game-select" class="pill pill-game" title="Loading available guides...">
+            <option value="" disabled selected>NO GUIDES</option>
           </select>
-          <select id="model-select" class="pill pill-model" title="Switch local SLM model">
-            <option value="llama3.2:3b">LLAMA 3.2:3B</option>
+          <select id="model-select" class="pill pill-model" title="Checking local SLM model...">
+            <option value="" disabled selected>CONNECTING...</option>
           </select>
           <div id="daemon-status" class="status-indicator status-offline" title="Checking daemon status...">
             <span class="status-dot"></span>

@@ -132,7 +132,10 @@ select.pill-game {
   background-repeat: no-repeat;
   background-position: right 6px center;
   background-size: 8px;
-  padding-right: 18px;
+  max-width: 130px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: all 0.15s ease;
 }
 
@@ -170,7 +173,7 @@ select.pill-model {
   background-position: right 6px center;
   background-size: 8px;
   padding-right: 18px;
-  max-width: 110px;
+  max-width: 135px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

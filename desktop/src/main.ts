@@ -94,7 +94,8 @@ const DAEMON_API_URL = "http://127.0.0.1:8765";
 // Cached DOM Elements & Active State
 // -----------------------------------------------------------------------------
 
-let activeGameId: string = "sekiro";
+let activeGameId: string = "";
+let wasDaemonOnline: boolean = false;
 
 let queryInput: HTMLInputElement;
 let searchBtn: HTMLButtonElement;
@@ -164,6 +165,13 @@ async function checkDaemonHealth(): Promise<void> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data: HealthResponse = await res.json();
 
+    const isNowOnline = data.status === "healthy" || data.status === "degraded";
+    if (isNowOnline && (!wasDaemonOnline || !activeGameId)) {
+      wasDaemonOnline = true;
+      fetchGamesCatalog();
+      fetchModelsCatalog();
+    }
+
     daemonStatus.classList.remove("status-offline", "status-degraded", "status-online");
 
     if (data.status === "healthy") {
@@ -179,19 +187,40 @@ async function checkDaemonHealth(): Promise<void> {
       daemonLabel.textContent = "OFFLINE";
     }
   } catch {
+    wasDaemonOnline = false;
     daemonStatus.classList.remove("status-online", "status-degraded");
     daemonStatus.classList.add("status-offline");
     daemonLabel.textContent = "NO DAEMON";
     daemonStatus.title = "Could not connect to Wayfinder micro-daemon at http://127.0.0.1:8765";
+
+    if (!activeGameId && gameSelect) {
+      gameSelect.innerHTML = '<option value="" disabled selected>NO DAEMON</option>';
+      gameSelect.title = "Could not connect to Wayfinder micro-daemon at http://127.0.0.1:8765";
+    }
+    if (modelSelect && (!modelSelect.value || modelSelect.value === "connecting")) {
+      modelSelect.innerHTML = '<option value="" disabled selected>NO DAEMON</option>';
+      modelSelect.title = "Could not connect to Wayfinder micro-daemon at http://127.0.0.1:8765";
+    }
   }
 }
 
 async function fetchGamesCatalog(selectGameId?: string): Promise<void> {
   try {
     const res = await fetch(`${DAEMON_API_URL}/games`, { method: "GET" });
-    if (!res.ok) return;
+    if (!res.ok) {
+      gameSelect.innerHTML = '<option value="" disabled selected>NO DAEMON</option>';
+      gameSelect.title = "Could not fetch games catalog: daemon returned an error";
+      activeGameId = "";
+      return;
+    }
     const data: GamesResponse = await res.json();
-    if (!data.games || data.games.length === 0) return;
+    if (!data.games || data.games.length === 0) {
+      gameSelect.innerHTML = '<option value="" disabled selected>NO GUIDES</option>';
+      gameSelect.title = "No combat guides indexed yet. Click '📥 Ingest' to index your first guide.";
+      activeGameId = "";
+      ingestGame.value = "";
+      return;
+    }
 
     gameSelect.innerHTML = "";
     data.games.forEach((g) => {
@@ -209,17 +238,30 @@ async function fetchGamesCatalog(selectGameId?: string): Promise<void> {
 
     gameSelect.value = activeGameId;
     ingestGame.value = activeGameId;
+    gameSelect.title = `Switch active game (Current: ${activeGameId.toUpperCase()})`;
   } catch (err) {
     console.debug("Could not fetch games catalog:", err);
+    gameSelect.innerHTML = '<option value="" disabled selected>NO DAEMON</option>';
+    gameSelect.title = "Could not connect to Wayfinder micro-daemon at http://127.0.0.1:8765";
+    activeGameId = "";
   }
 }
 
 async function fetchModelsCatalog(): Promise<void> {
   try {
     const res = await fetch(`${DAEMON_API_URL}/models`, { method: "GET" });
-    if (!res.ok) return;
+    if (!res.ok) {
+      modelSelect.innerHTML = '<option value="" disabled selected>NO DAEMON</option>';
+      modelSelect.title = "Could not connect to Wayfinder micro-daemon at http://127.0.0.1:8765";
+      return;
+    }
     const data: ModelsResponse = await res.json();
-    if (!data.available_models || data.available_models.length === 0) return;
+    if (!data.available_models || data.available_models.length === 0) {
+      const fallbackModel = data.active_model || "fallback";
+      modelSelect.innerHTML = `<option value="${fallbackModel}" selected>NO SLM (FALLBACK)</option>`;
+      modelSelect.title = "Ollama is offline or no models found. Tactical synthesis will use deterministic fallback.";
+      return;
+    }
 
     modelSelect.innerHTML = "";
     data.available_models.forEach((name) => {
@@ -237,6 +279,8 @@ async function fetchModelsCatalog(): Promise<void> {
     }
   } catch (err) {
     console.debug("Could not fetch models catalog:", err);
+    modelSelect.innerHTML = '<option value="" disabled selected>NO DAEMON</option>';
+    modelSelect.title = "Could not connect to Wayfinder micro-daemon at http://127.0.0.1:8765";
   }
 }
 
@@ -261,6 +305,12 @@ async function executeSearch(query: string): Promise<void> {
   const trimmed = query.trim();
   if (!trimmed) {
     setHUDState("idle");
+    return;
+  }
+
+  if (!activeGameId) {
+    emptyMessage.textContent = "No combat guides indexed yet. Click '📥 Ingest' above to add your first YouTube, Steam, or Markdown guide!";
+    setHUDState("empty");
     return;
   }
 
@@ -407,8 +457,14 @@ function showIngestFeedback(message: string, type: "success" | "error" | "loadin
 }
 
 async function executeIngest(): Promise<void> {
-  const gameId = ingestGame.value.trim() || "sekiro";
+  const gameId = ingestGame.value.trim() || activeGameId;
   const encounterId = ingestBoss.value.trim();
+
+  if (!gameId) {
+    showIngestFeedback("Game identifier is required (e.g. sekiro, elden_ring).", "error");
+    ingestGame.focus();
+    return;
+  }
 
   if (!encounterId) {
     showIngestFeedback("Boss or Encounter name is required.", "error");
