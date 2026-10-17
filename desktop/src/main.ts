@@ -375,9 +375,10 @@ function renderTacticalCard(card: TacticalCard, telemetry: TelemetryInfo): void 
 
     const clipHtml = clipUrl
       ? `
-        <div class="cue-clip-box" title="Combat Telegraph Loop (Click to pause/play)">
+        <div class="cue-clip-box" title="Combat Telegraph Loop (Click to pause/play, ⛶ for theatre view)">
           <video class="cue-video" src="${DAEMON_API_URL}${clipUrl}" autoplay loop muted playsinline preload="auto"></video>
           <span class="clip-pill">▶ LOOP</span>
+          <button class="clip-expand-btn" title="Expand to theatre view">⛶</button>
         </div>
       `
       : "";
@@ -402,13 +403,24 @@ function renderTacticalCard(card: TacticalCard, telemetry: TelemetryInfo): void 
       </div>
     `;
 
-    // Click on clip to toggle play/pause
+    // Click on clip to toggle play/pause or expand to theatre view
     if (clipUrl) {
       const videoEl = cueItem.querySelector(".cue-video") as HTMLVideoElement | null;
       const clipBox = cueItem.querySelector(".cue-clip-box") as HTMLElement | null;
+      const expandBtn = cueItem.querySelector(".clip-expand-btn") as HTMLButtonElement | null;
+
       if (videoEl && clipBox) {
+        expandBtn?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          clipBox.classList.toggle("expanded");
+        });
+
         clipBox.addEventListener("click", (e) => {
           e.stopPropagation();
+          if (clipBox.classList.contains("expanded")) {
+            clipBox.classList.remove("expanded");
+            return;
+          }
           if (videoEl.paused) {
             videoEl.play();
             clipBox.classList.remove("paused");
@@ -722,9 +734,14 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Global ESC key listener (closes modal first if open, else hides HUD)
+  // Global ESC key listener (closes expanded clip first, then modal, else hides HUD)
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+      const expandedClip = document.querySelector(".cue-clip-box.expanded");
+      if (expandedClip) {
+        expandedClip.classList.remove("expanded");
+        return;
+      }
       if (!ingestModal.classList.contains("hidden")) {
         closeIngestModal();
       } else {
