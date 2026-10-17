@@ -72,21 +72,26 @@ class LocalLLMClient:
 
     @staticmethod
     def find_best_matching_model(model_name: str, installed_models: list[str]) -> Optional[str]:
-        """Finds closest matching installed model handling tag differences (e.g. :3b vs :latest)."""
+        """Finds closest matching installed model handling tag differences (e.g. :latest vs :3b)."""
         if not model_name or not installed_models:
             return None
         if model_name in installed_models:
             return model_name
-        # Prefix match (e.g. 'llama3.2' -> 'llama3.2:3b')
-        prefix = f"{model_name}:"
-        for m in installed_models:
-            if m.startswith(prefix):
-                return m
-        # Base name match (e.g. 'llama3.2:latest' -> 'llama3.2:3b')
-        base = model_name.split(":")[0]
-        for m in installed_models:
-            if m.split(":")[0] == base:
-                return m
+
+        # Prefix match when no tag was specified (e.g. 'llama3.2' -> 'llama3.2:3b')
+        if ":" not in model_name:
+            prefix = f"{model_name}:"
+            for m in installed_models:
+                if m.startswith(prefix):
+                    return m
+
+        # Generic ':latest' tag match (e.g. 'llama3.2:latest' -> 'llama3.2:3b')
+        if model_name.endswith(":latest"):
+            base = model_name.split(":")[0]
+            for m in installed_models:
+                if m.split(":")[0] == base:
+                    return m
+
         return None
 
     def get_installed_models(self) -> list[str]:

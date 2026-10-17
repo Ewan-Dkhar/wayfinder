@@ -237,7 +237,7 @@ def test_default_db_path_resolution(monkeypatch):
     """Verifies WAYFINDER_DB_PATH environment override."""
     from core.db.database import get_default_db_path
 
-    custom_path = "/tmp/custom_test_wayfinder.db"
+    custom_path = str(Path("/tmp/custom_test_wayfinder.db").resolve())
     monkeypatch.setenv("WAYFINDER_DB_PATH", custom_path)
     resolved = get_default_db_path()
     assert str(resolved) == custom_path
@@ -296,3 +296,6 @@ def test_llm_model_tag_matching():
 
     # Non-existent model returns None
     assert LocalLLMClient.find_best_matching_model("nonexistent:1b", installed) is None
+
+    # Different parameter tags should never be cross-matched (e.g. 1.5b should not match 0.5b)
+    assert LocalLLMClient.find_best_matching_model("qwen2.5:1.5b", ["qwen2.5:0.5b"]) is None
