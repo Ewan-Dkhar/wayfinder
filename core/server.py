@@ -166,6 +166,8 @@ async def lifespan(app: FastAPI):
     without re-allocating connection handles per request.
     """
     db_path = getattr(app.state, "db_path", DEFAULT_DB_PATH)
+    from core.db.database import init_db
+    init_db(db_path)
     synthesizer = TacticalSynthesizer(db_path=db_path)
     app.state.synthesizer = synthesizer
 
