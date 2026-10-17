@@ -58,9 +58,16 @@ Wayfinder follows a decoupled, local-first client-daemon architecture:
 ## 📋 Prerequisites
 
 1. **Rust & Cargo** (Tauri Desktop Shell):
-   * Install via [rustup.rs](https://rustup.rs) (Windows, Linux, macOS).
-   * **Windows:** Ensure the "Desktop development with C++" workload from Visual Studio C++ Build Tools is installed.
-   * **Linux:** Ensure webkit and gtk libraries are installed (e.g. `sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget libssl-dev libgtk-3-dev`).
+   * Install Rust via [rustup.rs](https://rustup.rs) (or `winget install --id Rustlang.Rustup` on Windows).
+   * **Windows Requirements (Critical for `link.exe`):**
+     * Download and run the free [Visual Studio C++ Build Tools](https://aka.ms/vs/17/release/vs_BuildTools.exe) (or via PowerShell: `winget install --id Microsoft.VisualStudio.2022.BuildTools`).
+     * In the installer, check the **"Desktop development with C++"** workload (which installs `link.exe`, the MSVC toolset, and Windows SDK needed by Cargo).
+     * **Restart your terminal** after installation so your PATH updates properly.
+   * **Linux Requirements:**
+     * Ensure WebKitGTK and development headers are installed:
+       ```bash
+       sudo apt update && sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+       ```
 
 2. **Node.js & npm** (Frontend Runtime):
    * Install Node.js 18+ from [nodejs.org](https://nodejs.org).
