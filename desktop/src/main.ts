@@ -166,7 +166,7 @@ async function checkDaemonHealth(): Promise<void> {
     const data: HealthResponse = await res.json();
 
     const isNowOnline = data.status === "healthy" || data.status === "degraded";
-    if (isNowOnline && (!wasDaemonOnline || !activeGameId)) {
+    if (isNowOnline && !wasDaemonOnline) {
       wasDaemonOnline = true;
       fetchGamesCatalog();
       fetchModelsCatalog();
@@ -218,7 +218,6 @@ async function fetchGamesCatalog(selectGameId?: string): Promise<void> {
       gameSelect.innerHTML = '<option value="" disabled selected>NO GUIDES</option>';
       gameSelect.title = "No combat guides indexed yet. Click '📥 Ingest' to index your first guide.";
       activeGameId = "";
-      ingestGame.value = "";
       return;
     }
 
@@ -237,7 +236,6 @@ async function fetchGamesCatalog(selectGameId?: string): Promise<void> {
     }
 
     gameSelect.value = activeGameId;
-    ingestGame.value = activeGameId;
     gameSelect.title = `Switch active game (Current: ${activeGameId.toUpperCase()})`;
   } catch (err) {
     console.debug("Could not fetch games catalog:", err);
@@ -416,7 +414,16 @@ function openIngestModal(): void {
   ingestModal.classList.remove("hidden");
   ingestFeedback.classList.add("hidden");
   ingestFeedback.textContent = "";
-  ingestBoss.focus();
+
+  if (activeGameId && !ingestGame.value.trim()) {
+    ingestGame.value = activeGameId;
+  }
+
+  if (ingestGame.value.trim()) {
+    ingestBoss.focus();
+  } else {
+    ingestGame.focus();
+  }
 }
 
 function closeIngestModal(): void {
