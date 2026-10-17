@@ -3,6 +3,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::ShortcutState;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_shell::process::CommandChild;
+#[allow(unused_imports)]
 use tauri_plugin_shell::ShellExt;
 
 /// Thread-safe holder for the child daemon process handle.
@@ -55,23 +56,34 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            // Attempt to spawn the bundled Python sidecar daemon
-            match app.shell().sidecar("wayfinder-daemon") {
-                Ok(command) => {
-                    match command.spawn() {
-                        Ok((_rx, child)) => {
-                            eprintln!("[Wayfinder] Embedded wayfinder-daemon spawned successfully.");
-                            app.manage(DaemonProcess(Mutex::new(Some(child))));
-                        }
-                        Err(err) => {
-                            eprintln!("[Wayfinder] Could not spawn wayfinder-daemon sidecar ({err}). Expecting external daemon.");
-                            app.manage(DaemonProcess(Mutex::new(None)));
+            #[cfg(wayfinder_dev_stub)]
+            {
+                eprintln!("[Wayfinder Dev Mode] Development sidecar stub active. Skipping embedded spawn.");
+                eprintln!("[Wayfinder Dev Mode] Connects to live Python daemon on http://127.0.0.1:8765");
+                eprintln!("[Wayfinder Dev Mode] In development, run daemon via: uv run uvicorn core.server:app --port 8765");
+                app.manage(DaemonProcess(Mutex::new(None)));
+            }
+
+            #[cfg(not(wayfinder_dev_stub))]
+            {
+                // Attempt to spawn the bundled Python sidecar daemon
+                match app.shell().sidecar("wayfinder-daemon") {
+                    Ok(command) => {
+                        match command.spawn() {
+                            Ok((_rx, child)) => {
+                                eprintln!("[Wayfinder] Embedded wayfinder-daemon spawned successfully.");
+                                app.manage(DaemonProcess(Mutex::new(Some(child))));
+                            }
+                            Err(err) => {
+                                eprintln!("[Wayfinder] Could not spawn wayfinder-daemon sidecar ({err}). Expecting external daemon.");
+                                app.manage(DaemonProcess(Mutex::new(None)));
+                            }
                         }
                     }
-                }
-                Err(err) => {
-                    eprintln!("[Wayfinder] Sidecar not configured or not found ({err}). Expecting external daemon.");
-                    app.manage(DaemonProcess(Mutex::new(None)));
+                    Err(err) => {
+                        eprintln!("[Wayfinder] Sidecar not configured or not found ({err}). Expecting external daemon.");
+                        app.manage(DaemonProcess(Mutex::new(None)));
+                    }
                 }
             }
 

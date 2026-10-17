@@ -57,9 +57,18 @@ Wayfinder follows a decoupled, local-first client-daemon architecture:
 
 ## 📋 Prerequisites
 
-Wayfinder is designed to run 100% locally on your machine.
+1. **Rust & Cargo** (Tauri Desktop Shell):
+   * Install via [rustup.rs](https://rustup.rs) (Windows, Linux, macOS).
+   * **Windows:** Ensure the "Desktop development with C++" workload from Visual Studio C++ Build Tools is installed.
+   * **Linux:** Ensure webkit and gtk libraries are installed (e.g. `sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget libssl-dev libgtk-3-dev`).
 
-1. **Ollama** (Local LLM/SLM Runner):
+2. **Node.js & npm** (Frontend Runtime):
+   * Install Node.js 18+ from [nodejs.org](https://nodejs.org).
+
+3. **Python 3.11+ & uv** (Micro-Daemon & Database Engine):
+   * Install [uv](https://docs.astral.sh/uv/) for ultra-fast dependency management (`curl -LsSf https://astral.sh/uv/install.sh` or `winget install astral-sh.uv`).
+
+4. **Ollama** (Local LLM/SLM Runner):
    * Install from [ollama.com](https://ollama.com).
    * Pull the lightweight 1.5B distillation model:
      ```bash
