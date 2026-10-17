@@ -82,9 +82,15 @@ uv sync
 # Run database tests to verify SQLite FTS5 & endpoints
 uv run pytest
 
+# (Optional) Seed Sekiro combat guide test data into local dev database:
+uv run python -m core.db.seeds.sekiro_seed
+
 # Launch the micro-daemon
 uv run uvicorn core.server:app --port 8765
 ```
+
+> [!NOTE]
+> **Clean Database By Default:** Wayfinder maintains an unpolluted, clean database (0 chunks) by default so players can ingest only the guides they want. Seeding with `uv run python -m core.db.seeds.sekiro_seed` is strictly an opt-in step for development and testing.
 
 ### 2. Launch the Tauri HUD Overlay
 In a separate terminal:
@@ -123,6 +129,16 @@ Wayfinder includes a built-in guide ingestion pipeline in the HUD:
    * **URL Tab:** Paste a YouTube combat guide URL or Steam Community Guide URL.
    * **File Tab:** Drag and drop any `.md` markdown guide or wiki export.
 4. Click **`Ingest Guide`**. Wayfinder will parse, chunk, canonicalize encounter tags, index into SQLite FTS5, and switch your active game automatically!
+
+### Ingesting via CLI (Development Mode)
+You can also ingest guides directly from your terminal:
+```bash
+# Ingest a local Markdown guide:
+uv run python scripts/index_guide.py --game sekiro --boss lady_butterfly --file guides/lady_butterfly.md
+
+# Ingest a YouTube walkthrough (subtitle-first with Whisper CPU fallback):
+uv run python scripts/index_guide.py --game sekiro --boss genichiro --url "https://www.youtube.com/watch?v=..."
+```
 
 ---
 

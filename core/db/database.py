@@ -29,33 +29,18 @@ def is_frozen_binary() -> bool:
     return getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")
 
 
-def get_seed_db_path() -> Optional[Path]:
-    """Locates the bundled initial seed database.
-    
-    Checks PyInstaller extraction directory (sys._MEIPASS), followed by
-    development workspace root.
-    """
-    if hasattr(sys, "_MEIPASS"):
-        meipass_db = Path(sys._MEIPASS) / "wayfinder.db"
-        if meipass_db.exists():
-            return meipass_db
-
-    dev_db = Path(__file__).resolve().parent.parent.parent / "wayfinder.db"
-    if dev_db.exists():
-        return dev_db
-
-    return None
-
-
 def get_default_db_path() -> Path:
-    """Resolves the default SQLite database path with automatic self-seeding.
+    """Resolves the default SQLite database path with automatic clean schema initialization.
     
     1. Respects WAYFINDER_DB_PATH environment variable if explicitly set (tests / dev).
     2. In frozen binaries (PyInstaller / Tauri Sidecar):
-       Targets user application data directory (e.g. ~/.local/share/wayfinder/wayfinder.db)
-       and automatically seeds from bundled assets if not already present.
+       Targets user application data directory:
+       - Linux: ~/.local/share/wayfinder/wayfinder.db
+       - Windows: %LOCALAPPDATA%\\wayfinder\\wayfinder.db
+       - macOS: ~/Library/Application Support/wayfinder/wayfinder.db
+       Creates a clean, unseeded database schema on first boot.
     3. In development source tree:
-       Prefers repository workspace database if present, falling back to user app data.
+       Prefers repository workspace database if present, falling back to clean user app data DB.
     """
     env_override = os.getenv("WAYFINDER_DB_PATH")
     if env_override:
@@ -65,25 +50,25 @@ def get_default_db_path() -> Path:
 
     # In compiled standalone binaries: always use user data directory
     if is_frozen_binary():
-        if target_user_db.exists():
-            return target_user_db
-
-        # First run in production: seed from bundled asset
-        try:
-            APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
-            seed = get_seed_db_path()
-            if seed and seed.exists() and seed.resolve() != target_user_db.resolve():
-                shutil.copy2(seed, target_user_db)
-                return target_user_db
-        except Exception:
-            pass
-
+        if not target_user_db.exists():
+            try:
+                APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+                init_db(target_user_db)
+            except Exception:
+                pass
         return target_user_db
 
     # In development source tree mode:
     dev_db = Path(__file__).resolve().parent.parent.parent / "wayfinder.db"
     if dev_db.exists():
         return dev_db
+
+    if not target_user_db.exists():
+        try:
+            APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+            init_db(target_user_db)
+        except Exception:
+            pass
 
     return target_user_db
 

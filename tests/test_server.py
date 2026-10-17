@@ -19,20 +19,33 @@ from core.server import create_app
 
 @pytest.fixture(scope="module")
 def client(tmp_path_factory):
-    """Module-level test client ensuring lifespan hooks execute with isolated test config."""
-    test_config_dir = tmp_path_factory.mktemp("wayfinder_test_config")
-    test_config_file = test_config_dir / "config.json"
-    old_env = os.environ.get("WAYFINDER_CONFIG_PATH")
-    os.environ["WAYFINDER_CONFIG_PATH"] = str(test_config_file)
+    """Module-level test client ensuring lifespan hooks execute with isolated test config and seeded test DB."""
+    test_sandbox = tmp_path_factory.mktemp("wayfinder_test_sandbox")
+    test_config_file = test_sandbox / "config.json"
+    test_db_file = test_sandbox / "test_wayfinder.db"
 
-    app = create_app(db_path=DEFAULT_DB_PATH)
+    # Seed the isolated test database so server tests have combat chunks
+    from core.db.seeds.sekiro_seed import seed_sekiro
+    seed_sekiro(test_db_file)
+
+    old_cfg_env = os.environ.get("WAYFINDER_CONFIG_PATH")
+    old_db_env = os.environ.get("WAYFINDER_DB_PATH")
+    os.environ["WAYFINDER_CONFIG_PATH"] = str(test_config_file)
+    os.environ["WAYFINDER_DB_PATH"] = str(test_db_file)
+
+    app = create_app(db_path=test_db_file)
     with TestClient(app) as test_client:
         yield test_client
 
-    if old_env is not None:
-        os.environ["WAYFINDER_CONFIG_PATH"] = old_env
+    if old_cfg_env is not None:
+        os.environ["WAYFINDER_CONFIG_PATH"] = old_cfg_env
     else:
         os.environ.pop("WAYFINDER_CONFIG_PATH", None)
+
+    if old_db_env is not None:
+        os.environ["WAYFINDER_DB_PATH"] = old_db_env
+    else:
+        os.environ.pop("WAYFINDER_DB_PATH", None)
 
 
 def test_root_endpoint(client: TestClient):
@@ -230,8 +243,8 @@ def test_default_db_path_resolution(monkeypatch):
     assert str(resolved) == custom_path
 
 
-def test_auto_seeding_in_frozen_mode(tmp_path, monkeypatch):
-    """Verifies that in a frozen binary, the bundled seed DB is copied to user app data dir."""
+def test_clean_schema_init_in_frozen_mode(tmp_path, monkeypatch):
+    """Verifies that in a frozen binary, a clean unseeded schema is initialized in user app data dir."""
     import sys
     from core.db import database
 
@@ -240,16 +253,15 @@ def test_auto_seeding_in_frozen_mode(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.delenv("WAYFINDER_DB_PATH", raising=False)
 
-    # First call should create user dir and copy the seed DB
+    # First call should create user dir and initialize clean database schema
     target_db = database.get_default_db_path()
     assert target_db == fake_app_data / "wayfinder.db"
     assert target_db.exists()
-    assert target_db.stat().st_size > 0
 
-    # Verify database connection and schema work
+    # Verify clean database connection and schema work with 0 seeded chunks
     with database.get_connection(target_db) as conn:
         cursor = conn.execute("SELECT count(*) as total FROM guide_chunks")
-        assert cursor.fetchone()["total"] > 0
+        assert cursor.fetchone()["total"] == 0
 
 
 def test_wayfinder_config_path_override(tmp_path, monkeypatch):

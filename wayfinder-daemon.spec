@@ -17,9 +17,7 @@ whisper_datas, whisper_binaries, whisper_hidden = collect_all("faster_whisper")
 ctranslate_datas, ctranslate_binaries, ctranslate_hidden = collect_all("ctranslate2")
 
 # Combine all datas
-datas = [
-    ("wayfinder.db", "."),
-] + yt_dlp_datas + whisper_datas + ctranslate_datas
+datas = yt_dlp_datas + whisper_datas + ctranslate_datas
 
 # Combine all binaries
 binaries = yt_dlp_binaries + whisper_binaries + ctranslate_binaries
