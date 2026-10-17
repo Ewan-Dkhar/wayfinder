@@ -29,6 +29,10 @@ class TacticalCue(BaseModel):
         description="Punish window or hazard avoided",
         examples=["Deals heavy posture damage and resets combat rhythm"],
     )
+    clip_url: Optional[str] = Field(
+        default=None,
+        description="Local streaming URL for visual combat cue loop (e.g. '/api/v1/clips/12')",
+    )
 
 
 class TacticalCard(BaseModel):
@@ -64,6 +68,10 @@ class TacticalCard(BaseModel):
     timestamp_display: Optional[str] = Field(
         default=None,
         description="Formatted time range (e.g. '3:30 - 4:15')",
+    )
+    clip_url: Optional[str] = Field(
+        default=None,
+        description="Local streaming URL for primary combat clip (e.g. '/api/v1/clips/12')",
     )
 
     @field_validator("summary")

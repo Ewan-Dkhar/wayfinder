@@ -75,10 +75,12 @@ def build_fallback_card(result: SearchResult, query: str) -> TacticalCard:
         summary = " ".join(summary.split()[:20]) + "..."
 
     # Form a sensible tactical cue from the matching text
+    clip_url = f"/api/v1/clips/{result.chunk_id}" if result.has_clip else None
     cue = TacticalCue(
         tell=f"Boss attack matching: '{query}'",
         action=sentences[1] if len(sentences) > 1 else "Deflect or counter in rhythm",
         outcome="Avoid damage and gain posture punish window",
+        clip_url=clip_url,
     )
 
     return TacticalCard(
@@ -91,6 +93,7 @@ def build_fallback_card(result: SearchResult, query: str) -> TacticalCard:
         source_type=result.source_type,
         source_ref=result.source_ref,
         timestamp_display=result.formatted_timestamp if result.source_type == "youtube" else None,
+        clip_url=clip_url,
     )
 
 
@@ -178,6 +181,13 @@ class TacticalSynthesizer:
 
         telemetry["synthesis_ms"] = (time.perf_counter_ns() - t_synth_start) / 1_000_000.0
         telemetry["total_ms"] = (time.perf_counter_ns() - t_total_start) / 1_000_000.0
+
+        # Attach streaming clip endpoint if available
+        if top_result.has_clip:
+            clip_endpoint = f"/api/v1/clips/{top_result.chunk_id}"
+            card.clip_url = clip_endpoint
+            if card.tactical_cues and not card.tactical_cues[0].clip_url:
+                card.tactical_cues[0].clip_url = clip_endpoint
 
         return card, telemetry
 

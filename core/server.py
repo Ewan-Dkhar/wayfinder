@@ -26,10 +26,18 @@ if str(PROJECT_ROOT) not in sys.path:
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from core.db.database import DEFAULT_DB_PATH, GuideChunk, insert_chunks_batch
+from core.db.database import (
+    DEFAULT_DB_PATH,
+    GuideChunk,
+    get_chunk_by_id,
+    insert_chunks_batch,
+    update_chunk_clip,
+)
 from core.ingestion.chunker import chunk_cues_sliding_window
+from core.ingestion.clipper import VideoClipper, resolve_clip_path
 from core.ingestion.steam_parser import SteamGuideParser
 from core.ingestion.transcriber import WhisperTranscriber
 from core.ingestion.wiki_parser import WikiGuideParser, extract_metadata_from_url, is_safe_url
@@ -140,6 +148,7 @@ class IngestRequest(BaseModel):
     window_s: float = Field(default=35.0, description="YouTube sliding window in seconds")
     stride_s: float = Field(default=15.0, description="YouTube window stride in seconds")
     force_whisper: bool = Field(default=False, description="Force Whisper CPU transcription for video")
+    extract_clips: bool = Field(default=False, description="Extract and index video clips for timestamped chunks")
 
 
 class IngestResponse(BaseModel):
@@ -152,6 +161,23 @@ class IngestResponse(BaseModel):
     source_type: str
     source_ref: str
     latency_ms: float
+    message: str
+
+
+class GenerateClipsRequest(BaseModel):
+    """Payload to trigger video clip extraction for indexed chunks."""
+
+    chunk_id: Optional[int] = Field(default=None, description="Extract clip for a specific chunk ID")
+    game_id: Optional[str] = Field(default=None, description="Filter encounter chunks by game ID")
+    encounter_id: Optional[str] = Field(default=None, description="Filter chunks by encounter ID")
+    max_clips: int = Field(default=5, ge=1, le=20, description="Maximum number of clips to extract in this batch")
+
+
+class GenerateClipsResponse(BaseModel):
+    """Result of on-demand clip generation."""
+
+    success: bool
+    clips_created: int
     message: str
 
 
@@ -328,6 +354,116 @@ def create_app(db_path: Path | str = DEFAULT_DB_PATH) -> FastAPI:
             message=None,
         )
 
+    @app.get("/clips/{chunk_id}", tags=["Media"])
+    @app.get("/api/v1/clips/{chunk_id}", tags=["Media"])
+    def stream_chunk_clip(chunk_id: int, request: Request):
+        """Streams a localized 480p micro-clip for the given combat chunk.
+        
+        Supports HTTP Range requests (206 Partial Content) for sub-millisecond,
+        hardware-accelerated seeking and byte-0 playback in Tauri/WebView.
+        """
+        synthesizer: TacticalSynthesizer = request.app.state.synthesizer
+        chunk = get_chunk_by_id(synthesizer.fts_engine.conn, chunk_id)
+        if chunk is None or not chunk.clip_path:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No video clip indexed for chunk #{chunk_id}.",
+            )
+
+        clip_abs = resolve_clip_path(chunk.clip_path)
+        if not clip_abs.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Clip file for chunk #{chunk_id} not found on disk at {chunk.clip_path}.",
+            )
+
+        return FileResponse(
+            path=str(clip_abs),
+            media_type="video/mp4",
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "public, max-age=86400",
+            },
+        )
+
+    @app.post("/api/v1/clips/generate", response_model=GenerateClipsResponse, tags=["Media"])
+    def generate_clips(payload: GenerateClipsRequest, request: Request) -> GenerateClipsResponse:
+        """On-demand or background video clip extraction for indexed chunks."""
+        synthesizer: TacticalSynthesizer = request.app.state.synthesizer
+        conn = synthesizer.fts_engine.conn
+        clipper = VideoClipper()
+
+        if payload.chunk_id is not None:
+            chunk = get_chunk_by_id(conn, payload.chunk_id)
+            if chunk is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Chunk #{payload.chunk_id} not found.",
+                )
+            meta = clipper.create_chunk_clip(
+                game_id=chunk.game_id,
+                encounter_id=chunk.encounter_id,
+                chunk_id=chunk.id,
+                source_type=chunk.source_type,
+                source_ref=chunk.source_ref,
+                start_s=chunk.start_time,
+                end_s=chunk.end_time,
+            )
+            if not meta:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unable to extract clip for chunk #{payload.chunk_id} (source may be text-only).",
+                )
+            update_chunk_clip(conn, chunk.id, meta.relative_path)
+            conn.commit()
+            return GenerateClipsResponse(
+                success=True,
+                clips_created=1,
+                message=f"Successfully generated clip for chunk #{payload.chunk_id} at {meta.relative_path}.",
+            )
+
+        # Encounter or game-level batch clip generation
+        sql = """
+            SELECT id, game_id, encounter_id, source_type, source_ref, start_time, end_time
+            FROM guide_chunks
+            WHERE clip_path IS NULL
+        """
+        params: list[Any] = []
+        if payload.game_id:
+            sql += " AND game_id = ?"
+            params.append(payload.game_id)
+        if payload.encounter_id:
+            sql += " AND encounter_id = ?"
+            params.append(payload.encounter_id)
+        sql += " AND source_type = 'youtube' ORDER BY id ASC LIMIT ?"
+        params.append(payload.max_clips)
+
+        cursor = conn.execute(sql, params)
+        rows = cursor.fetchall()
+        created = 0
+        for r in rows:
+            meta = clipper.create_chunk_clip(
+                game_id=r["game_id"],
+                encounter_id=r["encounter_id"],
+                chunk_id=r["id"],
+                source_type=r["source_type"],
+                source_ref=r["source_ref"],
+                start_s=r["start_time"],
+                end_s=r["end_time"],
+            )
+            if meta:
+                update_chunk_clip(conn, r["id"], meta.relative_path)
+                created += 1
+
+        if created > 0:
+            conn.commit()
+
+        return GenerateClipsResponse(
+            success=True,
+            clips_created=created,
+            message=f"Generated {created} video clips for {payload.game_id or 'all games'}.",
+        )
+
     @app.post("/ingest", response_model=IngestResponse, tags=["Ingestion"])
     def ingest_guide(payload: IngestRequest, request: Request) -> IngestResponse:
         """Ingests YouTube, Steam Community, or Markdown guides into SQLite FTS5.
@@ -496,6 +632,34 @@ def create_app(db_path: Path | str = DEFAULT_DB_PATH) -> FastAPI:
         # Commit to SQLite (Triggers automatically synchronize guide_fts table)
         inserted_count = insert_chunks_batch(conn, chunks)
         conn.commit()
+
+        # Optional AOT clip extraction for video chunks
+        if payload.extract_clips and source_type == "youtube":
+            clipper = VideoClipper()
+            cur = conn.execute(
+                """
+                SELECT id, start_time, end_time, source_ref
+                FROM guide_chunks
+                WHERE game_id = ? AND encounter_id = ? AND clip_path IS NULL
+                ORDER BY id ASC
+                LIMIT 5
+                """,
+                (clean_game, clean_encounter),
+            )
+            unclipped_rows = cur.fetchall()
+            for row in unclipped_rows:
+                meta = clipper.create_chunk_clip(
+                    game_id=clean_game,
+                    encounter_id=clean_encounter,
+                    chunk_id=row["id"],
+                    source_type="youtube",
+                    source_ref=row["source_ref"],
+                    start_s=row["start_time"],
+                    end_s=row["end_time"],
+                )
+                if meta:
+                    update_chunk_clip(conn, row["id"], meta.relative_path)
+            conn.commit()
 
         t_end = time.perf_counter_ns()
         latency_ms = (t_end - t_start) / 1_000_000.0

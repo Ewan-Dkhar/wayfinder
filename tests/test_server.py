@@ -268,3 +268,61 @@ def test_llm_model_tag_matching():
 
     # Different parameter tags should never be cross-matched (e.g. 1.5b should not match 0.5b)
     assert LocalLLMClient.find_best_matching_model("qwen2.5:1.5b", ["qwen2.5:0.5b"]) is None
+
+
+def test_stream_clip_not_found(client: TestClient):
+    """Verifies 404 when requested chunk does not exist."""
+    res = client.get("/clips/999999")
+    assert res.status_code == 404
+    v1_res = client.get("/api/v1/clips/999999")
+    assert v1_res.status_code == 404
+
+
+def test_stream_clip_chunk_without_clip(client: TestClient):
+    """Verifies 404 when chunk exists but has no clip_path."""
+    res = client.get("/clips/1")
+    assert res.status_code == 404
+
+
+def test_stream_clip_success_and_query_propagation(client: TestClient, tmp_path, monkeypatch):
+    """Verifies streaming an indexed clip and query propagating clip_url to the card."""
+    from core.db.database import update_chunk_clip, get_connection
+    from core.ingestion import clipper
+    import core.server as server_module
+
+    # Create dummy video clip file
+    clip_file = tmp_path / "clips/sekiro/genichiro_1.mp4"
+    clip_file.parent.mkdir(parents=True, exist_ok=True)
+    clip_file.write_bytes(b"\x00" * 2048)  # Valid dummy content
+
+    # Patch clip resolution to look in tmp_path
+    monkeypatch.setattr(clipper, "APP_DATA_DIR", tmp_path)
+    monkeypatch.setattr(server_module, "resolve_clip_path", lambda p: tmp_path / p if not Path(p).is_absolute() else Path(p))
+
+    # Update chunk 1 in the active test database with clip_path
+    test_db_path = os.environ.get("WAYFINDER_DB_PATH")
+    with get_connection(test_db_path) as conn:
+        update_chunk_clip(conn, 1, "clips/sekiro/genichiro_1.mp4")
+        conn.commit()
+
+    # 1. Test streaming endpoint
+    res = client.get("/clips/1")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "video/mp4"
+    assert "bytes" in res.headers.get("accept-ranges", "").lower()
+    assert len(res.content) == 2048
+
+    # 2. Test query endpoint returns clip_url on tactical card
+    q_res = client.post("/query", json={"query": "jumping downward slam", "game_id": "sekiro"})
+    assert q_res.status_code == 200
+    card_data = q_res.json()["card"]
+    assert card_data is not None
+    assert card_data["clip_url"] == "/api/v1/clips/1"
+    assert card_data["tactical_cues"][0]["clip_url"] == "/api/v1/clips/1"
+
+
+def test_generate_clips_invalid_chunk(client: TestClient):
+    """Verifies 404 error when trying to generate a clip for a non-existent chunk ID."""
+    res = client.post("/api/v1/clips/generate", json={"chunk_id": 999999})
+    assert res.status_code == 404
+
