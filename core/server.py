@@ -32,6 +32,7 @@ from core.db.database import DEFAULT_DB_PATH, GuideChunk, insert_chunks_batch
 from core.ingestion.chunker import chunk_cues_sliding_window
 from core.ingestion.steam_parser import SteamGuideParser
 from core.ingestion.transcriber import WhisperTranscriber
+from core.ingestion.wiki_parser import WikiGuideParser, extract_metadata_from_url, is_safe_url
 from core.ingestion.yt_parser import YouTubeCaptionParser
 from core.llm.schemas import TacticalCard
 from core.llm.synthesizer import TacticalSynthesizer
@@ -130,8 +131,8 @@ class SetModelResponse(BaseModel):
 class IngestRequest(BaseModel):
     """Payload to ingest combat guides into the local knowledge base."""
 
-    game_id: str = Field(default="sekiro", description="Target game (e.g. 'sekiro')")
-    encounter_id: str = Field(..., description="Target encounter/boss (e.g. 'guardian_ape')", min_length=1)
+    game_id: Optional[str] = Field(default=None, description="Target game (e.g. 'sekiro'). If omitted, inferred from URL.")
+    encounter_id: Optional[str] = Field(default=None, description="Target encounter/boss (e.g. 'guardian_ape'). If omitted, inferred from URL.")
     source_type: str = Field(default="auto", description="'url', 'markdown', or 'auto'")
     url: Optional[str] = Field(default=None, description="YouTube, Steam Community Guide, or Wiki URL")
     content: Optional[str] = Field(default=None, description="Raw Markdown or text guide content")
@@ -338,19 +339,34 @@ def create_app(db_path: Path | str = DEFAULT_DB_PATH) -> FastAPI:
         conn = synthesizer.fts_engine.conn
         t_start = time.perf_counter_ns()
 
-        clean_game = slugify(payload.game_id)
-        clean_encounter = slugify(payload.encounter_id)
+        # Validate that at least URL or Content is provided
+        if not payload.url and not payload.content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Either 'url' or 'content' must be provided for guide ingestion.",
+            )
+
+        # Inferred metadata from URL if not explicitly supplied
+        inferred_game, inferred_encounter = "", ""
+        if payload.url:
+            inferred_game, inferred_encounter = extract_metadata_from_url(payload.url)
+
+        raw_game = (payload.game_id or inferred_game or "custom_game").strip()
+        raw_encounter = (payload.encounter_id or inferred_encounter or "").strip()
+
+        clean_game = slugify(raw_game) or "custom_game"
+        clean_encounter = slugify(raw_encounter)
         if not clean_encounter:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Invalid encounter_id: must contain valid alphanumeric characters.",
+                detail="Invalid encounter_id: must contain valid alphanumeric characters or be inferrable from URL.",
             )
 
         chunks: List[GuideChunk] = []
         source_type = "wiki"
         source_ref = payload.filename or f"guide_{clean_encounter}"
 
-        # Branch A: URL Ingestion (YouTube or Steam)
+        # Branch A: URL Ingestion (YouTube, Steam, or Web Wiki)
         if payload.url:
             url = payload.url.strip()
             if "youtube.com" in url or "youtu.be" in url:
@@ -401,10 +417,52 @@ def create_app(db_path: Path | str = DEFAULT_DB_PATH) -> FastAPI:
                     for c in steam_res.chunks
                 ]
             else:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Unsupported URL domain. Supported: YouTube ('youtube.com', 'youtu.be') and Steam ('steamcommunity.com').",
-                )
+                # Web Wiki / HTML Guide (Fextralife, Fandom, MediaWiki, generic guides)
+                is_safe, err_msg = is_safe_url(url)
+                if not is_safe:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"URL security validation failed: {err_msg}",
+                    )
+
+                source_type = "wiki"
+                wiki_parser = WikiGuideParser()
+                try:
+                    wiki_res = wiki_parser.parse_url(
+                        url,
+                        game_id=clean_game,
+                        encounter_id=clean_encounter,
+                    )
+                except ValueError as ve:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Wiki ingestion failed: {ve}",
+                    )
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Failed to fetch wiki content from '{url}': {e}",
+                    )
+
+                if not wiki_res.chunks:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"No combat guide content could be extracted from '{url}'.",
+                    )
+
+                source_ref = wiki_res.source_id
+                chunks = [
+                    GuideChunk(
+                        game_id=clean_game,
+                        encounter_id=clean_encounter,
+                        source_type="wiki",
+                        source_ref=source_ref,
+                        start_time=0.0,
+                        end_time=0.0,
+                        content_text=c.content_text,
+                    )
+                    for c in wiki_res.chunks
+                ]
 
         # Branch B: Direct Markdown or Text content
         elif payload.content:
@@ -414,7 +472,7 @@ def create_app(db_path: Path | str = DEFAULT_DB_PATH) -> FastAPI:
             parsed = steam_parser.parse_markdown_text(
                 content=payload.content,
                 source_id=source_ref,
-                title=payload.encounter_id,
+                title=clean_encounter,
             )
             chunks = [
                 GuideChunk(
@@ -428,11 +486,6 @@ def create_app(db_path: Path | str = DEFAULT_DB_PATH) -> FastAPI:
                 )
                 for c in parsed.chunks
             ]
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Either 'url' or 'content' must be provided for guide ingestion.",
-            )
 
         if not chunks:
             raise HTTPException(

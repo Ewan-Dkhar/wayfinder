@@ -463,35 +463,71 @@ function showIngestFeedback(message: string, type: "success" | "error" | "loadin
   ingestFeedback.classList.remove("hidden");
 }
 
-async function executeIngest(): Promise<void> {
-  const gameId = ingestGame.value.trim() || activeGameId;
-  const encounterId = ingestBoss.value.trim();
+function inferMetadataFromUrl(url: string): { game?: string; encounter?: string } {
+  try {
+    const parsed = new URL(url.trim());
+    const hostname = parsed.hostname.toLowerCase();
+    const pathname = decodeURIComponent(parsed.pathname).replace(/^\/+|\/+$/g, "");
+    let game = "";
+    let encounter = "";
 
-  if (!gameId) {
+    if (hostname.includes("fextralife.com")) {
+      const sub = hostname.split(".")[0];
+      if (sub && sub !== "wiki" && sub !== "www") game = sub;
+    } else if (hostname.includes("fandom.com") || hostname.includes("wiki.gg")) {
+      const sub = hostname.split(".")[0];
+      if (sub && sub !== "www") game = sub;
+    }
+
+    if (pathname) {
+      const parts = pathname.split("/").filter((p) => !["wiki", "guides", "guide", "index.php"].includes(p.toLowerCase()));
+      if (parts.length > 0) {
+        encounter = parts[parts.length - 1].replace(/[+_-]+/g, " ").trim();
+      }
+    }
+    return { game, encounter };
+  } catch {
+    return {};
+  }
+}
+
+async function executeIngest(): Promise<void> {
+  let gameId = ingestGame.value.trim() || activeGameId;
+  let encounterId = ingestBoss.value.trim();
+
+  if (activeIngestTab === "url") {
+    const url = ingestUrl.value.trim();
+    if (!url) {
+      showIngestFeedback("Please enter a valid YouTube, Steam, or Wiki URL.", "error");
+      ingestUrl.focus();
+      return;
+    }
+
+    // Auto-infer metadata if fields were left empty
+    const inferred = inferMetadataFromUrl(url);
+    if (!gameId && inferred.game) gameId = inferred.game;
+    if (!encounterId && inferred.encounter) encounterId = inferred.encounter;
+  }
+
+  if (!gameId && activeIngestTab !== "url") {
     showIngestFeedback("Game identifier is required (e.g. sekiro, elden_ring).", "error");
     ingestGame.focus();
     return;
   }
 
-  if (!encounterId) {
+  if (!encounterId && activeIngestTab !== "url") {
     showIngestFeedback("Boss or Encounter name is required.", "error");
     ingestBoss.focus();
     return;
   }
 
   const payload: any = {
-    game_id: gameId,
-    encounter_id: encounterId,
+    game_id: gameId || undefined,
+    encounter_id: encounterId || undefined,
   };
 
   if (activeIngestTab === "url") {
-    const url = ingestUrl.value.trim();
-    if (!url) {
-      showIngestFeedback("Please enter a valid YouTube or Steam URL.", "error");
-      ingestUrl.focus();
-      return;
-    }
-    payload.url = url;
+    payload.url = ingestUrl.value.trim();
     payload.source_type = "url";
   } else {
     const content = ingestContent.value.trim();
@@ -674,6 +710,20 @@ window.addEventListener("DOMContentLoaded", () => {
   tabUrl.addEventListener("click", () => switchIngestTab("url"));
   tabFile.addEventListener("click", () => switchIngestTab("file"));
   btnSubmitIngest.addEventListener("click", executeIngest);
+
+  // Auto-fill Game / Encounter when pasting a Wiki URL
+  ingestUrl.addEventListener("input", () => {
+    const url = ingestUrl.value.trim();
+    if (url) {
+      const inferred = inferMetadataFromUrl(url);
+      if (inferred.game && (!ingestGame.value.trim() || ingestGame.value === "sekiro")) {
+        ingestGame.value = inferred.game;
+      }
+      if (inferred.encounter && !ingestBoss.value.trim()) {
+        ingestBoss.value = inferred.encounter;
+      }
+    }
+  });
 
   // File Dropzone Handling
   dropzone.addEventListener("click", () => fileInput.click());
