@@ -38,6 +38,12 @@ class SearchResult:
     content_text: str
     bm25_score: float
     latency_ms: float
+    clip_path: Optional[str] = None
+
+    @property
+    def has_clip(self) -> bool:
+        """Indicates whether an indexed local video clip is available for this chunk."""
+        return bool(self.clip_path)
 
     @property
     def formatted_timestamp(self) -> str:
@@ -126,6 +132,7 @@ class FTSEngine:
                 c.start_time,
                 c.end_time,
                 c.content_text,
+                c.clip_path,
                 guide_fts.rank AS bm25_score
             FROM guide_fts
             JOIN guide_chunks c ON c.id = guide_fts.rowid
@@ -169,6 +176,7 @@ class FTSEngine:
                 start_time=row["start_time"],
                 end_time=row["end_time"],
                 content_text=row["content_text"],
+                clip_path=row["clip_path"],
                 bm25_score=row["bm25_score"],
                 latency_ms=latency_ms,
             )

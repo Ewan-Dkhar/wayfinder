@@ -88,6 +88,7 @@ class GuideChunk:
     content_text: str # Transcript or written guide excerpt
     start_time: float = 0.0  # Video start timestamp in seconds (0.0 for text guides)
     end_time: float = 0.0    # Video end timestamp in seconds (0.0 for text guides)
+    clip_path: Optional[str] = None  # Local filesystem path or relative identifier for video clip
     id: Optional[int] = None
 
 
@@ -101,7 +102,8 @@ CREATE TABLE IF NOT EXISTS guide_chunks (
     source_ref TEXT NOT NULL,
     start_time REAL NOT NULL DEFAULT 0.0,
     end_time REAL NOT NULL DEFAULT 0.0,
-    content_text TEXT NOT NULL
+    content_text TEXT NOT NULL,
+    clip_path TEXT DEFAULT NULL
 );
 
 -- Fast composite indices for filtering by game, encounter, and source type
@@ -110,6 +112,9 @@ ON guide_chunks(game_id, encounter_id);
 
 CREATE INDEX IF NOT EXISTS idx_chunks_source 
 ON guide_chunks(source_type);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_clip 
+ON guide_chunks(clip_path);
 
 -- 2. FTS5 Virtual Table using External Content pattern
 -- content='guide_chunks' points to the relational table, saving disk space and avoiding duplication.
@@ -173,8 +178,18 @@ def get_connection(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
 
 
 def init_db(db_path: Path | str = DEFAULT_DB_PATH) -> None:
-    """Initializes the database schema and triggers."""
+    """Initializes the database schema and triggers, applying non-destructive migrations if needed."""
     with get_connection(db_path) as conn:
+        # If guide_chunks already exists in a legacy database, check for missing columns first
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'guide_chunks';"
+        )
+        if cursor.fetchone() is not None:
+            col_cursor = conn.execute("PRAGMA table_info(guide_chunks);")
+            columns = {row["name"] for row in col_cursor.fetchall()}
+            if "clip_path" not in columns:
+                conn.execute("ALTER TABLE guide_chunks ADD COLUMN clip_path TEXT DEFAULT NULL;")
+
         conn.executescript(SCHEMA_SQL)
 
 
@@ -188,9 +203,9 @@ def insert_chunk(conn: sqlite3.Connection, chunk: GuideChunk) -> int:
         """
         INSERT INTO guide_chunks (
             game_id, encounter_id, source_type, source_ref, 
-            start_time, end_time, content_text
+            start_time, end_time, content_text, clip_path
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             chunk.game_id,
@@ -200,6 +215,7 @@ def insert_chunk(conn: sqlite3.Connection, chunk: GuideChunk) -> int:
             chunk.start_time,
             chunk.end_time,
             chunk.content_text,
+            chunk.clip_path,
         ),
     )
     return cursor.lastrowid  # type: ignore[return-value]
@@ -219,6 +235,7 @@ def insert_chunks_batch(conn: sqlite3.Connection, chunks: Iterable[GuideChunk]) 
             c.start_time,
             c.end_time,
             c.content_text,
+            c.clip_path,
         )
         for c in chunks
     ]
@@ -226,10 +243,49 @@ def insert_chunks_batch(conn: sqlite3.Connection, chunks: Iterable[GuideChunk]) 
         """
         INSERT INTO guide_chunks (
             game_id, encounter_id, source_type, source_ref, 
-            start_time, end_time, content_text
+            start_time, end_time, content_text, clip_path
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )
     return cursor.rowcount
+
+
+def update_chunk_clip(conn: sqlite3.Connection, chunk_id: int, clip_path: Optional[str]) -> bool:
+    """Updates the clip_path for a specific guide chunk.
+    
+    Returns True if a row was updated, False otherwise.
+    """
+    cursor = conn.execute(
+        "UPDATE guide_chunks SET clip_path = ? WHERE id = ?",
+        (clip_path, chunk_id),
+    )
+    return cursor.rowcount > 0
+
+
+def get_chunk_by_id(conn: sqlite3.Connection, chunk_id: int) -> Optional[GuideChunk]:
+    """Fetches a single chunk by its rowid."""
+    cursor = conn.execute(
+        """
+        SELECT id, game_id, encounter_id, source_type, source_ref,
+               start_time, end_time, content_text, clip_path
+        FROM guide_chunks
+        WHERE id = ?
+        """,
+        (chunk_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return GuideChunk(
+        id=row["id"],
+        game_id=row["game_id"],
+        encounter_id=row["encounter_id"],
+        source_type=row["source_type"],
+        source_ref=row["source_ref"],
+        start_time=row["start_time"],
+        end_time=row["end_time"],
+        content_text=row["content_text"],
+        clip_path=row["clip_path"],
+    )
