@@ -140,6 +140,7 @@ let dropzoneText: HTMLElement;
 let fileInput: HTMLInputElement;
 let ingestContent: HTMLTextAreaElement;
 let ingestFeedback: HTMLElement;
+let ingestExtractClips: HTMLInputElement;
 
 let activeIngestTab: "url" | "file" = "url";
 let selectedFileName: string | null = null;
@@ -567,6 +568,7 @@ async function executeIngest(): Promise<void> {
   if (activeIngestTab === "url") {
     payload.url = ingestUrl.value.trim();
     payload.source_type = "url";
+    payload.extract_clips = ingestExtractClips ? ingestExtractClips.checked : true;
   } else {
     const content = ingestContent.value.trim();
     if (!content) {
@@ -708,6 +710,7 @@ window.addEventListener("DOMContentLoaded", () => {
   fileInput = document.getElementById("file-input") as HTMLInputElement;
   ingestContent = document.getElementById("ingest-content") as HTMLTextAreaElement;
   ingestFeedback = document.getElementById("ingest-feedback") as HTMLElement;
+  ingestExtractClips = document.getElementById("ingest-extract-clips") as HTMLInputElement;
 
   // Search input events
   searchBtn.addEventListener("click", () => executeSearch(queryInput.value));

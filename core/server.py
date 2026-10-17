@@ -148,7 +148,7 @@ class IngestRequest(BaseModel):
     window_s: float = Field(default=35.0, description="YouTube sliding window in seconds")
     stride_s: float = Field(default=15.0, description="YouTube window stride in seconds")
     force_whisper: bool = Field(default=False, description="Force Whisper CPU transcription for video")
-    extract_clips: bool = Field(default=False, description="Extract and index video clips for timestamped chunks")
+    extract_clips: bool = Field(default=True, description="Extract and index video clips for timestamped chunks")
 
 
 class IngestResponse(BaseModel):

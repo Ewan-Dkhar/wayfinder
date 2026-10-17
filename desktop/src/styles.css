@@ -858,6 +858,36 @@ select.pill-model option {
 
 .mt-2 { margin-top: 6px; }
 
+.form-field-checkbox {
+  display: flex;
+  align-items: center;
+}
+
+.checkbox-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-container input[type="checkbox"] {
+  accent-color: var(--accent-cyan);
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+}
+
+.checkbox-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  transition: color 0.15s ease;
+}
+
+.checkbox-container:hover .checkbox-label {
+  color: var(--text-primary);
+}
+
 /* Ingest Feedback Banner */
 .ingest-feedback {
   font-size: 11px;
